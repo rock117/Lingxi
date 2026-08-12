@@ -1,3 +1,15 @@
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+*.apk
+*.aab
+*.ap_
+captures/
+.cxx/
+*.keystore
+*.jks
+
 # OS
 .DS_Store
 Thumbs.db
@@ -7,6 +19,11 @@ desktop.ini
 .vscode/
 .idea/
 *.iml
+
+# Rust
+backend/target/
+backend/data.db
+backend/data.db-*
 
 # 日志
 *.log

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 个人自用：允许局域网 HTTP 访问后端 -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

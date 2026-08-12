@@ -10,14 +10,14 @@
 Lingxi/
 ├── PLAN.md      # 详细实现计划
 ├── backend/     # Rust 后端（Rocket + SeaORM + SQLite + WebSocket）
-└── app/         # Flutter App（Android）
+└── app/         # Kotlin Android App（Jetpack Compose）
 ```
 
 ## 架构概览
 
 ```
 ┌─────────────────┐         HTTP REST (CRUD)         ┌──────────────────┐
-│  Flutter App    │ ◄──────────────────────────────► │  Rust Backend    │
+│  Kotlin App     │ ◄──────────────────────────────► │  Rust Backend    │
 │  (Android)      │                                  │  (Rocket+tokio)  │
 │                 │       WebSocket (push)           │                  │
 │                 │ ◄─────────────────────────────── │  ┌────────────┐  │
@@ -41,11 +41,11 @@ Lingxi/
 - `tokio` — 异步运行时
 
 ### App (`app/`)
-- Flutter（Android）
-- `dio` — HTTP 客户端
-- `web_socket_channel` — WebSocket 客户端
-- `provider` — 状态管理
-- `shared_preferences` — 服务器配置本地持久化
+- Kotlin + Jetpack Compose
+- ViewModel + StateFlow — 状态管理
+- DataStore Preferences — 服务器配置本地持久化
+- Navigation Compose — 页面导航
+- Retrofit / OkHttp / WebSocket — 接口已定义，**当前 UI 使用 Mock 数据**（见代码中 TODO）
 
 ## 快速开始
 
@@ -72,13 +72,32 @@ curl http://127.0.0.1:8000/api/health
 
 ### App
 
-```bash
+用 Android Studio 打开 `app/` 目录，或用本机已安装的 Gradle 命令行装到手机：
+
+```bat
 cd app
-flutter pub get
-flutter run
+install-debug.bat
 ```
 
-首次启动后，在设置页填写后端服务器地址与端口（局域网内运行的后端 IP + 8000）。
+PowerShell（可跟日志）：
+
+```powershell
+cd app
+powershell -ExecutionPolicy Bypass -File .\install-debug.ps1 -Logcat
+```
+
+脚本默认使用：
+
+- Gradle：`C:\rock\coding\tool\gradle-8.10-bin\gradle-8.10`
+- JDK 17：`C:\Program Files\Eclipse Adoptium\jdk-17.0.12.7-hotspot`
+- SDK：`%LOCALAPPDATA%\Android\Sdk`
+
+路径不对时改脚本参数或文件内变量即可。手机需开启 USB 调试，`adb devices` 显示 `device`。
+
+依赖仓库已配置阿里云镜像（见 `settings.gradle.kts`）；`gradlew` 的 Gradle 发行包改用腾讯云镜像。若仍超时，可继续用本机 Gradle + `install-debug.bat`。
+
+当前 App 为 **Mock 模式**：条件/通知在内存中读写，不请求后端。  
+设置页可先填好服务器地址（接入 API 后生效）；模拟器访问本机后端用 `10.0.2.2:8000`。
 
 ## API 一览
 

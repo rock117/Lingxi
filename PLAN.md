@@ -2,16 +2,16 @@
 
 ## 概述
 
-一个 Rust + Flutter 的炒股条件推送应用。Rust 后端 (Rocket + SeaORM + SQLite + WebSocket)
-提供 REST API 管理条件和通知，并通过 WebSocket 长连接向 Flutter App 实时推送消息；
-内置 Mock 数据引擎周期性触发条件并推送。Flutter App 负责服务器配置、新建/管理条件、
+一个 Rust + Kotlin Android 的炒股条件推送应用。Rust 后端 (Rocket + SeaORM + SQLite + WebSocket)
+提供 REST API 管理条件和通知，并通过 WebSocket 长连接向 Android App 实时推送消息；
+内置 Mock 数据引擎周期性触发条件并推送。Kotlin App 负责服务器配置、新建/管理条件、
 接收并展示推送消息。
 
 ## 架构
 
 ```
 ┌─────────────────┐         HTTP REST (CRUD)         ┌──────────────────┐
-│  Flutter App    │ ◄──────────────────────────────► │  Rust Backend    │
+│  Kotlin App     │ ◄──────────────────────────────► │  Rust Backend    │
 │  (Android)      │                                  │  (Rocket+tokio)  │
 │                 │       WebSocket (push)           │                  │
 │                 │ ◄─────────────────────────────── │  ┌────────────┐  │
@@ -32,11 +32,14 @@
 - `tracing` — 日志
 - `rocket_cors` — CORS 中间件
 
-### App (Flutter)
-- `dio` — HTTP 客户端
-- `web_socket_channel` — WebSocket
-- `provider` — 状态管理
-- `shared_preferences` — 服务器配置持久化
+### App (Kotlin Android)
+- Jetpack Compose — UI
+- Retrofit + OkHttp — HTTP
+- OkHttp WebSocket — 实时推送
+- ViewModel + StateFlow — 状态管理
+- DataStore Preferences — 服务器配置持久化
+- Navigation Compose — 导航
+- Kotlinx Serialization — JSON
 
 ## 项目结构
 
@@ -46,59 +49,39 @@ Lingxi/
 ├── AGENTS.md                     # 构建/运行命令（阶段7生成）
 ├── backend/                      # Rust 后端
 │   ├── Cargo.toml
-│   ├── migration/                # SeaORM 数据库迁移
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       ├── lib.rs
-│   │       └── m20250101_000001_create_tables.rs
+│   ├── migrations/               # SQL migration
 │   ├── entity/                   # SeaORM 实体
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       ├── condition.rs
-│   │       ├── notification.rs
-│   │       └── mod.rs
 │   └── src/
 │       ├── main.rs
 │       ├── config.rs
 │       ├── db.rs
 │       ├── error.rs
 │       ├── routes/
-│       │   ├── mod.rs
-│       │   ├── condition.rs
-│       │   ├── notification.rs
-│       │   └── health.rs
 │       ├── ws/
-│       │   ├── mod.rs
-│       │   └── hub.rs
 │       └── engine/
-│           ├── mod.rs
-│           ├── mock.rs
-│           └── matcher.rs
 │
-└── app/                          # Flutter App
-    ├── pubspec.yaml
-    └── lib/
-        ├── main.dart
-        ├── app.dart
-        ├── config.dart
-        ├── models/
-        │   ├── condition.dart
-        │   └── notification.dart
-        ├── services/
-        │   ├── config_store.dart
-        │   ├── api_service.dart
-        │   └── ws_service.dart
-        ├── providers/
-        │   ├── settings_provider.dart
-        │   ├── condition_provider.dart
-        │   └── notification_provider.dart
-        ├── screens/
-        │   ├── home_screen.dart
-        │   ├── condition_list_screen.dart
-        │   ├── condition_form_screen.dart
-        │   ├── notification_list_screen.dart
-        │   └── settings_screen.dart
-        └── widgets/
+└── app/                          # Kotlin Android App
+    ├── settings.gradle.kts
+    ├── build.gradle.kts
+    └── app/
+        ├── build.gradle.kts
+        └── src/main/
+            ├── AndroidManifest.xml
+            └── java/com/lingxi/app/
+                ├── MainActivity.kt
+                ├── LingxiApp.kt
+                ├── data/
+                │   ├── model/
+                │   ├── api/
+                │   ├── ws/
+                │   └── prefs/
+                ├── ui/
+                │   ├── theme/
+                │   ├── home/
+                │   ├── condition/
+                │   ├── notification/
+                │   └── settings/
+                └── viewmodel/
 ```
 
 ## 数据模型 (SQLite)
@@ -173,30 +156,30 @@ CREATE TABLE notification (
 
 ### 条件匹配 (`engine/matcher.rs`)
 - 第一版：`expression` 为 JSON，如 `{"type":"price_drop","threshold":0.05}`
-- 简单随机/阈值判断，后续可扩展为脚本/DSL
+- 简单随机/频率判断，后续可扩展为脚本/DSL
 
-## Flutter App 设计
+## Kotlin App 设计
 
 ### 服务器设置
 - 字段：服务器地址、HTTP 端口、WebSocket 端口、是否 TLS、WebSocket 路径
-- `shared_preferences` 持久化
+- DataStore Preferences 持久化
 - 首次启动引导填写，提供「测试连接」按钮（调 `/api/health`）
 - 设置变更后触发 WebSocket 重连
 
 ### 页面
-1. **首页**：底部 Tab 切换「条件」「通知」，AppBar 齿轮图标进设置
+1. **首页**：底部 Tab 切换「条件」「通知」，顶部栏齿轮图标进设置
 2. **条件列表**：显示所有条件，可启用/禁用、删除
 3. **新建/编辑条件表单**：名称、类型、股票代码、表达式参数
 4. **通知列表**：推送历史，未读标红，点击标记已读
 5. **设置页**：服务器配置 + 测试连接
 
 ### 状态管理
-- `Provider` + `ChangeNotifier`
-- `SettingsProvider` / `ConditionProvider` / `NotificationProvider`
+- `ViewModel` + `StateFlow`
+- `SettingsViewModel` / `ConditionViewModel` / `NotificationViewModel`
 
 ### WebSocket 服务
 - App 启动后建立连接，断线自动重连
-- 收到消息 → 加入 `NotificationProvider` → UI 刷新
+- 收到消息 → 更新 `NotificationViewModel` → UI 刷新
 
 ## 实现阶段
 
@@ -220,14 +203,14 @@ CREATE TABLE notification (
 ### 阶段 4：通知查询接口
 12. 实现 `/api/notifications` 列表 + 标记已读
 
-### 阶段 5：Flutter App 骨架 + 服务器设置
-13. `flutter create app`，配置依赖
-14. `ConfigStore` + `SettingsProvider` + `SettingsScreen`
-15. `ApiService` / `WsService` 从配置动态构造 URL
+### 阶段 5：Kotlin App 骨架 + 服务器设置
+13. 创建 Android 工程，配置 Compose / Retrofit / DataStore
+14. `ServerPrefs` + `SettingsViewModel` + 设置页
+15. `LingxiApi` / `WsClient` 从配置动态构造 URL
 16. 首次启动引导 + 测试连接
 17. 条件列表 + 表单页
 
-### 阶段 6：Flutter App 通知
+### 阶段 6：Kotlin App 通知
 18. 通知列表页
 19. 接入 WebSocket 实时刷新
 20. 未读标记 + UI 状态
@@ -235,4 +218,4 @@ CREATE TABLE notification (
 ### 阶段 7：联调 + 完善
 21. 真机联调
 22. 写 `AGENTS.md`
-23. 可选：`flutter_local_notifications` 系统通知
+23. 可选：系统通知（NotificationCompat）

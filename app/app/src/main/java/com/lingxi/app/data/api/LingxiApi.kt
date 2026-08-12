@@ -1,0 +1,54 @@
+package com.lingxi.app.data.api
+
+import com.lingxi.app.data.model.Condition
+import com.lingxi.app.data.model.CreateConditionRequest
+import com.lingxi.app.data.model.HealthResponse
+import com.lingxi.app.data.model.NotificationItem
+import com.lingxi.app.data.model.UpdateConditionRequest
+import retrofit2.http.Body
+import retrofit2.http.DELETE
+import retrofit2.http.GET
+import retrofit2.http.POST
+import retrofit2.http.PUT
+import retrofit2.http.Path
+import retrofit2.http.Query
+
+/**
+ * 后端 REST 接口定义。
+ *
+ * TODO: UI 当前使用 [com.lingxi.app.data.mock.MockRepository]，尚未调用本接口。
+ *  后续接入步骤：
+ *  1. 用 [ApiClient.create] 按 ServerConfig 构造实例
+ *  2. 在 Repository / ViewModel 中替换 Mock 读写
+ *  3. 设置页「测试连接」改为调用 [health]
+ */
+interface LingxiApi {
+    @GET("api/health")
+    suspend fun health(): HealthResponse
+
+    @GET("api/conditions")
+    suspend fun listConditions(): List<Condition>
+
+    @GET("api/conditions/{id}")
+    suspend fun getCondition(@Path("id") id: Long): Condition
+
+    @POST("api/conditions")
+    suspend fun createCondition(@Body body: CreateConditionRequest): Condition
+
+    @PUT("api/conditions/{id}")
+    suspend fun updateCondition(
+        @Path("id") id: Long,
+        @Body body: UpdateConditionRequest,
+    ): Condition
+
+    @DELETE("api/conditions/{id}")
+    suspend fun deleteCondition(@Path("id") id: Long)
+
+    @GET("api/notifications")
+    suspend fun listNotifications(
+        @Query("unread") unread: Boolean? = null,
+    ): List<NotificationItem>
+
+    @POST("api/notifications/{id}/read")
+    suspend fun markRead(@Path("id") id: Long): NotificationItem
+}
