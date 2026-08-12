@@ -2,13 +2,21 @@ package com.lingxi.app.data.mock
 
 import com.lingxi.app.data.model.Condition
 import com.lingxi.app.data.model.NotificationItem
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.random.Random
 
 /**
  * 本地内存 Mock，当前 UI / ViewModel 全部走这里。
@@ -19,6 +27,13 @@ import java.util.concurrent.atomic.AtomicLong
 object MockRepository {
     private val conditionIdSeq = AtomicLong(3)
     private val notificationIdSeq = AtomicLong(3)
+
+    /** 通知列表最多保留条数 */
+    private const val MAX_NOTIFICATIONS = 100
+
+    /** 定时推送间隔范围（秒） */
+    private const val MIN_INTERVAL_SEC = 5
+    private const val MAX_INTERVAL_SEC = 15
 
     private val _conditions = MutableStateFlow(
         listOf(
@@ -86,6 +101,37 @@ object MockRepository {
     )
     val notifications: StateFlow<List<NotificationItem>> = _notifications.asStateFlow()
 
+    /** 新通知事件流：每次产生新通知时发射，供 Service 监听后发系统通知 */
+    private val _newNotification = MutableSharedFlow<NotificationItem>(extraBufferCapacity = 16)
+    val newNotification: SharedFlow<NotificationItem> = _newNotification.asSharedFlow()
+
+    // ---- 定时随机推送 ----
+
+    private var pushJob: Job? = null
+
+    /** 启动定时随机推送（Mock 模式），每隔 5~15 秒随机发一条 */
+    fun startAutoPush(scope: CoroutineScope) {
+        if (pushJob?.isActive == true) return
+        pushJob = scope.launch {
+            while (isActive) {
+                val waitSec = Random.nextInt(MIN_INTERVAL_SEC, MAX_INTERVAL_SEC + 1)
+                delay(waitSec * 1000L)
+                if (!isActive) break
+                pushRandom()
+            }
+        }
+    }
+
+    /** 停止定时随机推送 */
+    fun stopAutoPush() {
+        pushJob?.cancel()
+        pushJob = null
+    }
+
+    val isAutoPushing: Boolean get() = pushJob?.isActive == true
+
+    // ---- CRUD ----
+
     fun addCondition(
         name: String,
         kind: String,
@@ -142,11 +188,32 @@ object MockRepository {
         _notifications.update { list -> list.map { it.copy(read = true) } }
     }
 
-    /** 模拟一条推送，方便演示通知页刷新 */
+    /** 手动模拟一条推送，方便演示通知页刷新 */
     fun pushMockNotification() {
-        val cond = _conditions.value.firstOrNull { it.enabled }
+        pushRandom()
+    }
+
+    /** 随机选一个启用的条件，生成一条通知（列表上限 100 条） */
+    private fun pushRandom() {
+        val cond = _conditions.value.filter { it.enabled }.randomOrNull()
             ?: _conditions.value.firstOrNull()
             ?: return
+
+        val bodies = when (cond.kind) {
+            "trade" -> listOf(
+                "MA5 上穿 MA20",
+                "价格涨幅超过 ${Random.nextInt(3, 10)}%",
+                "价格跌幅超过 ${Random.nextInt(3, 10)}%",
+                "成交量异常放大",
+                "RSI 超买区域",
+            )
+            else -> listOf(
+                "匹配关键词: ${cond.expression}",
+                "突发新闻事件触发",
+                "相关市场异动",
+            )
+        }
+
         val item = NotificationItem(
             id = notificationIdSeq.incrementAndGet(),
             conditionId = cond.id,
@@ -154,11 +221,17 @@ object MockRepository {
                 "trade" -> "${cond.symbol ?: "?"} 交易信号"
                 else -> "新闻事件: ${cond.name}"
             },
-            body = "Mock 推送 · ${Instant.now()}",
+            body = bodies.random(),
             read = false,
             createdAt = Instant.now().toString(),
         )
-        _notifications.update { listOf(item) + it }
+
+        _notifications.update { list ->
+            (listOf(item) + list).take(MAX_NOTIFICATIONS)
+        }
+
+        // 通过 SharedFlow 通知 Service 发系统通知
+        _newNotification.tryEmit(item)
     }
 
     suspend fun mockTestConnection(): Result<String> {

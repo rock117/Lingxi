@@ -21,8 +21,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * WebSocket 推送客户端。
  *
- * TODO: UI 当前用 MockRepository.pushMockNotification() 模拟推送，尚未连接 /ws。
- *  后续：在应用层 observe [connect]，将收到的 NotificationItem 写入通知列表。
+ * 连接 [ServerConfig.wsUrl]，收到 notification 类型消息后通过 Flow 发射。
+ * 断线自动重连（指数退避，最大 30 秒）。
  */
 class WsClient {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -34,6 +34,7 @@ class WsClient {
     fun connect(config: ServerConfig): Flow<NotificationItem> = callbackFlow {
         val stopped = AtomicBoolean(false)
         var socket: WebSocket? = null
+        var backoffMs = 1_000L
 
         fun open() {
             if (stopped.get() || !isActive) return
@@ -41,6 +42,10 @@ class WsClient {
             socket = client.newWebSocket(
                 request,
                 object : WebSocketListener() {
+                    override fun onOpen(webSocket: WebSocket, response: Response) {
+                        backoffMs = 1_000L
+                    }
+
                     override fun onMessage(webSocket: WebSocket, text: String) {
                         runCatching {
                             val msg = json.decodeFromString<WsPushMessage>(text)
@@ -50,12 +55,35 @@ class WsClient {
                         }
                     }
 
+                    override fun onClosing(
+                        webSocket: WebSocket,
+                        code: Int,
+                        reason: String,
+                    ) {
+                        webSocket.close(code, reason)
+                    }
+
+                    override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                        scheduleReconnect()
+                    }
+
                     override fun onFailure(
                         webSocket: WebSocket,
                         t: Throwable,
                         response: Response?,
                     ) {
                         webSocket.cancel()
+                        scheduleReconnect()
+                    }
+
+                    private fun scheduleReconnect() {
+                        if (stopped.get() || !isActive) return
+                        val wait = backoffMs
+                        backoffMs = (backoffMs * 2).coerceAtMost(30_000L)
+                        launch {
+                            delay(wait)
+                            if (!stopped.get() && isActive) open()
+                        }
                     }
                 },
             )
@@ -63,19 +91,8 @@ class WsClient {
 
         open()
 
-        // TODO: 改为指数退避 + 仅在连接断开时重连，避免周期性强制重建
-        val reconnectJob = launch {
-            while (isActive && !stopped.get()) {
-                delay(5_000)
-                if (stopped.get()) break
-                socket?.cancel()
-                open()
-            }
-        }
-
         awaitClose {
             stopped.set(true)
-            reconnectJob.cancel()
             socket?.close(1000, "client close")
             socket?.cancel()
         }

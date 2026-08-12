@@ -1,19 +1,26 @@
 package com.lingxi.app
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.Composable
+import androidx.core.content.ContextCompat
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.lingxi.app.navigation.Routes
 import com.lingxi.app.condition.ConditionFormScreen
 import com.lingxi.app.home.HomeScreen
+import com.lingxi.app.navigation.Routes
+import com.lingxi.app.notification.NotificationHelper
+import com.lingxi.app.service.LingxiService
 import com.lingxi.app.settings.SettingsScreen
 import com.lingxi.app.theme.LingxiTheme
 import com.lingxi.app.viewmodel.ConditionViewModel
@@ -25,9 +32,23 @@ class MainActivity : ComponentActivity() {
     private val notificationViewModel: NotificationViewModel by viewModels()
     private val settingsViewModel: SettingsViewModel by viewModels()
 
+    private val requestNotificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                LingxiService.start(this)
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // 注册通知渠道
+        NotificationHelper.ensureChannels(this)
+
+        // 请求通知权限并启动前台服务
+        startNotificationService()
+
         setContent {
             LingxiTheme {
                 LingxiNav(
@@ -37,6 +58,29 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    private fun startNotificationService() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (granted) {
+                LingxiService.start(this)
+            } else {
+                requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        } else {
+            LingxiService.start(this)
+        }
+    }
+
+    override fun onDestroy() {
+        // 不在 onDestroy 停止服务，让后台监听持续运行
+        // 用户可通过系统通知设置手动停止
+        super.onDestroy()
     }
 }
 

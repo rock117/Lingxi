@@ -63,4 +63,7 @@ dependencies {
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.jakewharton.retrofit:retrofit2-kotlinx-serialization-converter:1.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+
+    // 桌面图标角标（微信式未读数）
+    implementation("me.leolin:ShortcutBadger:1.1.22@aar")
 }
