@@ -2,6 +2,7 @@ mod config;
 mod db;
 mod engine;
 mod error;
+mod market;
 mod routes;
 mod ws;
 
@@ -76,6 +77,7 @@ async fn rocket() -> _ {
                 routes::condition::delete,
                 routes::notification::list,
                 routes::notification::mark_read,
+                market::routes::sentiment,
                 ws::ws_handler,
             ],
         )
