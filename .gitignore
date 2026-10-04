@@ -27,3 +27,4 @@ backend/data.db-*
 
 # 日志
 *.log
+.env
