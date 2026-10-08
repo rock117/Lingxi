@@ -1,0 +1,32 @@
+# Lingxi 依赖服务：PostgreSQL（行情/业务长期存储）
+#
+# 启动:  docker compose up -d
+# 停止:  docker compose down
+# 看日志: docker compose logs -f postgres
+#
+# 数据目录由 .env 的 POSTGRES_DATA_DIR 指定（宿主机绝对路径或相对路径）
+# 容器内固定挂载到 /var/lib/postgresql/data（官方镜像约定）
+#
+# 连接串（与后端 DATABASE_URL 一致）:
+#   postgres://lingxi:lingxi@127.0.0.1:5432/lingxi
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: lingxi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-lingxi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lingxi}
+      POSTGRES_DB: ${POSTGRES_DB:-lingxi}
+      TZ: Asia/Shanghai
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # 宿主机路径 → 容器数据目录（可写绝对路径，见 .env POSTGRES_DATA_DIR）
+      - ${POSTGRES_DATA_DIR:-./data/postgres}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

@@ -1,14 +1,15 @@
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbErr};
+use sea_orm::{ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, DbErr};
 use tracing::info;
 
-/// 启动时执行的 SQL migration（与 `migrations/*.sql` 保持同步）。
-/// 全部使用 `IF NOT EXISTS`，可重复执行。
 const INIT_SQL: &str = include_str!("../migrations/20260721000001_init.sql");
 
-/// 初始化数据库连接，并确保 schema 已就绪。
+/// 初始化 PostgreSQL 连接，并确保 schema 已就绪。
 pub async fn init_db(database_url: &str) -> anyhow::Result<DatabaseConnection> {
     let db = Database::connect(database_url).await?;
-    info!("数据库已连接: {}", database_url);
+    if db.get_database_backend() != DatabaseBackend::Postgres {
+        anyhow::bail!("仅支持 PostgreSQL，当前 DATABASE_URL={}", redact_url(database_url));
+    }
+    info!("数据库已连接: {}", redact_url(database_url));
     run_migrations(&db).await?;
     Ok(db)
 }
@@ -37,4 +38,18 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect()
+}
+
+fn redact_url(url: &str) -> String {
+    if let Some(scheme_end) = url.find("://") {
+        let rest = &url[scheme_end + 3..];
+        if let Some(at) = rest.find('@') {
+            let creds = &rest[..at];
+            if let Some(colon) = creds.find(':') {
+                let user = &creds[..colon];
+                return format!("{}://{}:***@{}", &url[..scheme_end], user, &rest[at + 1..]);
+            }
+        }
+    }
+    url.to_string()
 }

@@ -12,6 +12,7 @@
   - [后端 (`backend/`)](#后端-backend)
   - [App (`app/`)](#app-app)
 - [快速开始](#快速开始)
+  - [PostgreSQL（Docker）](#postgresqldocker)
   - [后端](#后端)
   - [App](#app)
   - [部署后端到远端](#部署后端到远端)
@@ -22,7 +23,7 @@
 ```
 Lingxi/
 ├── PLAN.md      # 详细实现计划
-├── backend/     # Rust 后端（Rocket + SeaORM + SQLite + WebSocket）
+├── backend/     # Rust 后端（Rocket + SeaORM + PostgreSQL + WebSocket）
 └── app/         # Kotlin Android App（Jetpack Compose）
 ```
 
@@ -37,20 +38,20 @@ Lingxi/
 └─────────────────┘                                  │  │ Mock Engine│  │
                                                      │  │ (周期触发) │  │
                                                      │  └────────────┘  │
-                                                     │  SQLite (SeaORM) │
+                                                     │ PostgreSQL       │
                                                      └──────────────────┘
 ```
 
 - **后台 API**：抓取/接收数据（当前为 Mock 假数据），根据用户配置的条件进行匹配，
-  满足时通过 WebSocket 推送给已连接的客户端，并持久化到 SQLite。
+  满足时通过 WebSocket 推送给已连接的客户端，并持久化到 PostgreSQL。
 - **App**：新建/管理条件（交易指令 或 新闻事件），保存到后台；接收并展示推送的通知。
 
 ## 技术栈
 
 ### 后端 (`backend/`)
 - [Rocket](https://rocket.rs/) 0.5 + `rocket_ws` — Web 框架 + WebSocket
-- [SeaORM](https://www.sea-ql.org/SeaORM/) 2.0 — ORM（SQLite 后端）
-- [sqlx-cli](https://github.com/launchbadge/sqlx) — 数据库 migration 管理（纯 SQL 文件）
+- [SeaORM](https://www.sea-ql.org/SeaORM/) 2.0 — ORM（PostgreSQL）
+- [Docker Compose](./docker-compose.yml) — 本地 / 服务器 Postgres 16
 - `tokio` — 异步运行时
 
 ### App (`app/`)
@@ -62,18 +63,29 @@ Lingxi/
 
 ## 快速开始
 
+### PostgreSQL（Docker）
+
+仓库根目录：
+
+```bash
+docker compose up -d
+docker compose ps
+```
+
+默认账号见 `.env.example`：`lingxi` / `lingxi`，库名 `lingxi`，端口 `5432`。  
+连接串：`postgres://lingxi:lingxi@127.0.0.1:5432/lingxi`（写入 `.env` 的 `DATABASE_URL`）。
+
+数据目录由 `.env` 的 `POSTGRES_DATA_DIR` 指定（宿主机路径，可为绝对路径），挂载到容器内 `/var/lib/postgresql/data`。  
+例：`POSTGRES_DATA_DIR=C:/rock/data/lingxi-postgres`。`docker compose down` 不会删除该目录。
+
 ### 后端
 
 ```bash
+# 先确保 Postgres 已起来
+docker compose up -d
+
 cd backend
-
-# 安装 sqlx-cli（首次）
-cargo install sqlx-cli --no-default-features --features sqlite,rustls
-
-# 执行数据库 migration
-sqlx migrate run --database-url "sqlite://data.db?mode=rwc" --source migrations
-
-# 启动服务（默认监听 0.0.0.0:8000）
+# 默认 DATABASE_URL 指向本机 Docker Postgres；启动时自动建表
 cargo run
 ```
 
@@ -122,7 +134,8 @@ powershell -ExecutionPolicy Bypass -File .\install-debug.ps1 -Logcat
 python script/deploy_backend.py
 ```
 
-脚本会：上传 `backend/` → 远端 `cargo build --release` → 安装并重启 `lingxi-backend` systemd 服务（默认目录见 `deploy_remote_dir`，端口见 `app_http_port`）。
+脚本会：上传 `backend/` → 远端 `cargo build --release` → 按 `.env` 的 `DATABASE_URL` 写入 systemd 并重启。  
+远端也需先有 Postgres（推荐同样 `docker compose up -d`，或把 `DATABASE_URL` 指到已有实例）。
 
 机内健康检查（SSH 上）：
 

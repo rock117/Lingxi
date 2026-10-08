@@ -10,8 +10,9 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            database_url: env::var("DATABASE_URL")
-                .unwrap_or_else(|_| "sqlite://./data.db?mode=rwc".to_string()),
+            database_url: env::var("DATABASE_URL").unwrap_or_else(|_| {
+                "postgres://lingxi:lingxi@127.0.0.1:5432/lingxi".to_string()
+            }),
             host: env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
             port: env::var("PORT")
                 .ok()

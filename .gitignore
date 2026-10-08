@@ -22,8 +22,8 @@ desktop.ini
 
 # Rust
 backend/target/
-backend/data.db
-backend/data.db-*
+# 本地 Postgres 数据（若 POSTGRES_DATA_DIR 用仓库内相对路径）
+/data/postgres/
 
 # 日志
 *.log

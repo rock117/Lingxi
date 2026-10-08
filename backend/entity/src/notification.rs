@@ -10,6 +10,8 @@ pub struct Model {
     pub title: String,
     pub body: String,
     pub payload: Option<String>,
+    /// Postgres 保留字，显式列名
+    #[sea_orm(column_name = "read")]
     pub read: bool,
     pub created_at: String,
 }

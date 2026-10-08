@@ -14,10 +14,16 @@ rocket = { version = "0.5", features = ["json"] }
 rocket_ws = "0.1"
 rocket_cors = "0.6"
 
-sea-orm = { version = "2.0", features = [
-    "sqlx-sqlite",
+sea-orm = { version = "2.0", default-features = false, features = [
+    "sqlx-postgres",
     "runtime-tokio-rustls",
     "macros",
+    "with-json",
+    "with-chrono",
+    "with-rust_decimal",
+    "with-uuid",
+    "with-time",
+    "stream",
 ] }
 
 tokio = { version = "1", features = ["full"] }

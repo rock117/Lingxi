@@ -38,6 +38,10 @@ DEFAULT_REMOTE_DIR = os.getenv("deploy_remote_dir", "/home/rock/project/lingxi")
 SERVICE_NAME = "lingxi-backend"
 BINARY_NAME = "lingxi-backend"
 LISTEN_PORT = int(os.getenv("app_http_port", os.getenv("PORT", "8000")))
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgres://lingxi:lingxi@127.0.0.1:5432/lingxi",
+).strip()
 
 
 def parse_gitignore(repo_dir: Path) -> list[str]:
@@ -127,18 +131,21 @@ def run_ssh(ssh: paramiko.SSHClient, cmd: str, check: bool = True) -> tuple[int,
     return code, out, err
 
 
-def systemd_unit(remote_dir: str, port: int) -> str:
+def systemd_unit(remote_dir: str, port: int, database_url: str) -> str:
     bin_path = f"{remote_dir}/target/release/{BINARY_NAME}"
+    # systemd Environment= 值里若含 % 需转义；密码尽量避免特殊字符
+    db_esc = database_url.replace("%", "%%")
     return f"""[Unit]
 Description=Lingxi Backend
-After=network.target
+After=network.target docker.service
+Wants=docker.service
 
 [Service]
 Type=simple
 WorkingDirectory={remote_dir}
 Environment=HOST=0.0.0.0
 Environment=PORT={port}
-Environment=DATABASE_URL=sqlite://{remote_dir}/data.db?mode=rwc
+Environment=DATABASE_URL={db_esc}
 Environment=RUST_LOG=info
 ExecStart={bin_path}
 Restart=on-failure
@@ -152,7 +159,10 @@ WantedBy=multi-user.target
 def ensure_systemd_and_restart(ssh: paramiko.SSHClient, sftp: paramiko.SFTPClient, remote_dir: str):
     unit_path = f"/etc/systemd/system/{SERVICE_NAME}.service"
     local_tmp = PROJECT_ROOT / "script" / f".{SERVICE_NAME}.service.tmp"
-    local_tmp.write_text(systemd_unit(remote_dir, LISTEN_PORT), encoding="utf-8")
+    local_tmp.write_text(
+        systemd_unit(remote_dir, LISTEN_PORT, DATABASE_URL),
+        encoding="utf-8",
+    )
     try:
         sftp.put(str(local_tmp), f"/tmp/{SERVICE_NAME}.service")
         run_ssh(ssh, f"sudo mv /tmp/{SERVICE_NAME}.service {unit_path}")
@@ -200,6 +210,7 @@ def main():
     print(f"SSH: {SSH_USER}@{SSH_HOST}:{SSH_PORT}")
     print(f"远程目录: {args.remote_dir}")
     print(f"服务端口: {LISTEN_PORT}")
+    print(f"DATABASE_URL: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else DATABASE_URL}")
 
     patterns = parse_gitignore(BACKEND_DIR)
     files = collect_files(BACKEND_DIR, patterns)

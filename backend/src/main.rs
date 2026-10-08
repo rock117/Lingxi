@@ -27,7 +27,7 @@ async fn rocket() -> _ {
 
     let cfg = AppConfig::default();
 
-    // 初始化数据库并自动执行 migrations（CREATE TABLE IF NOT EXISTS）
+    // 初始化 PostgreSQL 并自动执行 migrations
     let db = db::init_db(&cfg.database_url)
         .await
         .expect("数据库初始化失败");
