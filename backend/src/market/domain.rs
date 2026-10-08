@@ -1,29 +1,18 @@
 //! MSI 领域对象
 //!
-//! 规范：`docs/market_sentiment.md`（三层架构 Direction / Intensity / Constraint）。
+//! 规范：`docs/market_sentiment.md`（Direction / Intensity / Constraint）。
 
 use serde::{Deserialize, Serialize};
 
-// ============================================================
-// 输入
-// ============================================================
-
-/// 单只股票某一日行情（OHLC + 成交额 + 涨跌幅）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StockDailyData {
     pub symbol: String,
     pub date: String,
-    /// 开盘价
     pub open: f64,
-    /// 最高价
     pub high: f64,
-    /// 最低价
     pub low: f64,
-    /// 收盘价
     pub close_price: f64,
-    /// 成交额（元）
     pub amount: f64,
-    /// 涨跌幅（%），相对昨收
     pub change_pct: f64,
 }
 
@@ -35,15 +24,9 @@ pub struct MarketDailySnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketDataInput {
-    /// 时间正序，末日为最近
     pub snapshots: Vec<MarketDailySnapshot>,
 }
 
-// ============================================================
-// 三层分与分量
-// ============================================================
-
-/// 三层得分，均 ∈ [0, 100]，50 中性
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MsiLayers {
     pub direction: f64,
@@ -51,20 +34,22 @@ pub struct MsiLayers {
     pub constraint: f64,
 }
 
-/// 各分量明细（均为 0～100 分，除非另有说明）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MsiComponents {
     pub breadth: f64,
     pub money_flow: f64,
     pub gap_breadth: f64,
+    /// 结构确认（家数方向 vs 等权均涨跌幅，见规范 §5.4）
+    pub structure: f64,
+    /// 新高/新低家数比
+    pub nh_nl: f64,
     pub directed_volume: f64,
-    /// 成交量比值（末日总额 / N 日均量），非 0～100
     pub volume_ratio: f64,
     pub limit_pressure: f64,
-    /// N 日真实区间位置分 0～100
     pub range_position: f64,
-    /// 末日日内收盘位置分 0～100
     pub intraday_position: f64,
+    /// 连续涨跌 / 未涨跌惯性
+    pub inertia: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,11 +63,15 @@ pub struct MsiDiagnostics {
     pub breadth_last: f64,
     pub money_flow_last: f64,
     pub gap_breadth_last: f64,
+    pub structure_last: f64,
+    pub nh_nl_last: f64,
+    pub new_high_count: usize,
+    pub new_low_count: usize,
+    pub avg_up_streak: f64,
+    pub avg_down_streak: f64,
+    pub avg_no_up_streak: f64,
+    pub avg_no_down_streak: f64,
 }
-
-// ============================================================
-// 状态 / 信号
-// ============================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -188,17 +177,11 @@ pub struct MsiSignal {
     pub volume_status: VolumeStatus,
     pub volume_ratio: f64,
     pub price_status: PriceStatus,
-    /// 真实区间位置 raw ∈ [0, 1]
     pub price_position: f64,
 }
 
-// ============================================================
-// 输出
-// ============================================================
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MsiResult {
-    /// MSI 综合值 [0, 100]
     pub value: f64,
     pub layers: MsiLayers,
     pub components: MsiComponents,

@@ -2,9 +2,9 @@
 //!
 //! **规范（Source of Truth）：** `docs/market_sentiment.md`
 //!
-//! - Direction 50%：宽度 + 资金 + 开盘缺口
+//! - Direction 50%：宽度 + 资金 + 开盘缺口 + 结构确认 + 新高新低
 //! - Intensity 25%：有方向量能 + 涨跌停压力
-//! - Constraint 25%：真实高低点位置 + 日内收盘位置
+//! - Constraint 25%：真实高低点位置 + 日内位置 + 涨跌惯性
 //!
 //! 算法变更须先改文档再改代码。
 
