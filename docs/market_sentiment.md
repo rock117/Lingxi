@@ -34,6 +34,8 @@
    - [7.2 日内收盘位置 `intraday_position_score`](#72-日内收盘位置-intraday_position_score仅末日)
    - [7.3 涨跌惯性 `inertia_score`](#73-涨跌惯性-inertia_score)
 8. [MSI 总分与展示区间](#8-msi-总分与展示区间)
+   - [8.1 取值范围与有界性](#81-取值范围与有界性)
+   - [8.2 展示分档](#82-展示分档)
 9. [状态与组合信号](#9-状态与组合信号)
    - [9.1 布尔量](#91-布尔量)
    - [9.2 `VolumeStatus`](#92-volumestatus仅由-volume_ratio)
@@ -64,6 +66,8 @@ MSI_value = W_DIRECTION * Direction
           + W_INTENSITY * Intensity
           + W_CONSTRAINT * Constraint
 ```
+
+`MSI_value`（即响应字段 `value`）取值 **`[0, 100]`**，中性 **`50`**；有界性证明见 **§8.1**。
 
 | 层 | 权重常量 | 内部分量 |
 |---|---|---|
@@ -600,13 +604,92 @@ avg_no_down_streak  = mean(no_down_streak)
 
 ## 8. MSI 总分与展示区间
 
-`value` 为三层加权总分，供展示分档与信号阈值使用；下表分档**不改变**计算公式。
+`value` 为三层加权总分，供展示分档与信号阈值使用。
 
 ```
 value = W_DIRECTION * Direction
       + W_INTENSITY * Intensity
       + W_CONSTRAINT * Constraint
 ```
+
+其中 `W_DIRECTION + W_INTENSITY + W_CONSTRAINT = 1`（`0.50 + 0.25 + 0.25`）。
+
+### 8.1 取值范围与有界性
+
+| 量 | 最小值 | 最大值 | 中性 |
+|---|---|---|---|
+| MSI `value` | **0** | **100** | **50** |
+| 任一层 `Direction` / `Intensity` / `Constraint` | **0** | **100** | **50** |
+| 任一 `*_score` 分量（及 `range_position_score` / `intraday_position_score`） | **0** | **100** | **50**（或由 `0.5×100` 得到） |
+
+实现**不必**对最终 `value` 再写一遍 `clamp`：有界性由构造保证。证明如下。
+
+**引理 A（`map` 有界）**  
+对任意实数 `x`：
+
+```
+map(x) = 50 + 50 * clamp(x, -1, 1) ∈ [0, 100]
+```
+
+因 `clamp(x,-1,1) ∈ [-1,1]`，故 `50 + 50*(…) ∈ [0, 100]`。
+
+**引理 B（线性凸组合保持区间）**  
+若 `a_i ∈ [0, 100]`，权重 `w_i ≥ 0` 且 `∑ w_i = 1`，则
+
+```
+∑ w_i * a_i ∈ [0, 100]
+```
+
+（最小值在全部 `a_i=0` 时取到 `0`；最大值在全部 `a_i=100` 时取到 `100`。）
+
+**各层有界**
+
+1. **Direction**  
+   `breadth_score`、`money_flow_score`、`gap_breadth_score`、`structure_score`、`nh_nl_score` 均由 `map(EWMA(…))` 得到（或缺口/新高新低在序列为空时取中性 `50`），故各 ∈ `[0, 100]`。  
+   `Direction = 0.20 * (五者之和) = ∑ (0.20 * score_i)`，且 `5 × 0.20 = 1`，由引理 B 得 `Direction ∈ [0, 100]`。
+
+2. **Intensity**  
+   `directed_volume_score`、`limit_pressure_score` 均为 `map(…)`，∈ `[0, 100]`。  
+   `Intensity = 0.70 * directed_volume_score + 0.30 * limit_pressure_score`，权重和为 1，故 `Intensity ∈ [0, 100]`。
+
+3. **Constraint**  
+   - `range_position_raw ∈ [0, 1]`（单票 `pos_i` 经 `clamp` 到 `[0,1]` 再平均；无样本时为 `0.5`）⇒ `range_position_score = raw * 100 ∈ [0, 100]`。  
+   - `intraday_position_score = mean(intra_i) * 100`，`intra_i ∈ [0,1]` ⇒ ∈ `[0, 100]`。  
+   - `inertia_score = map(inertia_raw)` ⇒ ∈ `[0, 100]`。  
+   `Constraint = 0.45 * range + 0.20 * intra + 0.35 * inertia`，权重和为 1，故 `Constraint ∈ [0, 100]`。
+
+**定理（MSI 有界）**  
+`value = 0.50 * Direction + 0.25 * Intensity + 0.25 * Constraint`，三层均 ∈ `[0, 100]` 且权重非负、和为 1，由引理 B：
+
+```
+value ∈ [0, 100]
+```
+
+**端点可达性（理论）**
+
+- **最小值 0**：当三层均为 0（例如各 `map` 输入均饱和为 `-1`，且区间/日内位置均为 0）时，`value = 0`。  
+- **最大值 100**：当三层均为 100 时，`value = 100`。  
+- **中性 50**：无有效数据时规范规定返回 `value = 50`；若各层恰为 50，亦得 `value = 50`。
+
+实盘中端点极少同时出现，但不影响区间定义。
+
+**端点盘面含义（解读）**
+
+| `value` | 情绪含义 | 典型同时成立的盘面（理想化极端） |
+|---|---|---|
+| **100（最大）** | 短线情绪极端一致偏多：方向、力度、位置/惯性全面顶格多头 | **Direction**：涨多跌少、上涨股吃成交额、普遍高开、家数与等权涨幅同向偏多、窗口新高远多于新低；**Intensity**：相对窗口明显放量且宽度偏多，疑似涨停远多于跌停；**Constraint**：多数票收在 N 日区间上沿、日内收近最高、连涨/未跌惯性很强 |
+| **0（最小）** | 短线情绪极端一致偏空：方向、力度、位置/惯性全面顶格空头 | **Direction**：跌多家数与资金占优、普遍低开、结构空头同向、窗口新低远多于新高；**Intensity**：放量下跌（或量能水位配合空头宽度），疑似跌停远多于涨停；**Constraint**：多数票贴 N 日区间下沿、日内收近最低、连跌/未涨惯性很强 |
+| **50（中性）** | 多空大致均衡，或信息不足不作方向判断 | 各层/分量接近中性；或无有效样本时规范强制返回中性（见 §4.3） |
+
+补充：
+
+1. **100 / 0 是「仪表盘满刻度」**，表示模型定义下的极端一致，**不是**「必涨/必跌」或交易指令。  
+2. 实盘更常见的是落在中间带；接近端点时，宜结合 §9 信号（尤其高位放量、放量下跌等）解读拥挤与风险，而不是只看总分。  
+3. 某一层接近 0 或 100、另两层温和时，总分不会到端点，但仍可从 `layers` / `components` 看出是「方向极端」还是「位置/惯性极端」。
+
+### 8.2 展示分档
+
+下表仅用于展示解读，**不是**指标的物理上下限，也**不改变**计算公式。
 
 | 条件 | 含义（展示用） |
 |---|---|
