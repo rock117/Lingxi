@@ -24,10 +24,12 @@ import com.lingxi.app.service.LingxiService
 import com.lingxi.app.settings.SettingsScreen
 import com.lingxi.app.theme.LingxiTheme
 import com.lingxi.app.viewmodel.ConditionViewModel
+import com.lingxi.app.viewmodel.MarketViewModel
 import com.lingxi.app.viewmodel.NotificationViewModel
 import com.lingxi.app.viewmodel.SettingsViewModel
 
 class MainActivity : ComponentActivity() {
+    private val marketViewModel: MarketViewModel by viewModels()
     private val conditionViewModel: ConditionViewModel by viewModels()
     private val notificationViewModel: NotificationViewModel by viewModels()
     private val settingsViewModel: SettingsViewModel by viewModels()
@@ -52,6 +54,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             LingxiTheme {
                 LingxiNav(
+                    marketViewModel = marketViewModel,
                     conditionViewModel = conditionViewModel,
                     notificationViewModel = notificationViewModel,
                     settingsViewModel = settingsViewModel,
@@ -86,6 +89,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun LingxiNav(
+    marketViewModel: MarketViewModel,
     conditionViewModel: ConditionViewModel,
     notificationViewModel: NotificationViewModel,
     settingsViewModel: SettingsViewModel,
@@ -95,6 +99,7 @@ private fun LingxiNav(
     NavHost(navController = navController, startDestination = Routes.HOME) {
         composable(Routes.HOME) {
             HomeScreen(
+                marketViewModel = marketViewModel,
                 conditionViewModel = conditionViewModel,
                 notificationViewModel = notificationViewModel,
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },

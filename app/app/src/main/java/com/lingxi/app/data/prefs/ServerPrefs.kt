@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.lingxi.app.BuildConfig
 import com.lingxi.app.data.model.ServerConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -25,11 +26,11 @@ class ServerPrefs(private val context: Context) {
 
     val configFlow: Flow<ServerConfig> = context.dataStore.data.map { prefs ->
         ServerConfig(
-            host = prefs[Keys.HOST] ?: "10.0.2.2",
-            httpPort = prefs[Keys.HTTP_PORT] ?: 8000,
-            wsPort = prefs[Keys.WS_PORT] ?: 8000,
-            useTls = prefs[Keys.USE_TLS] ?: false,
-            wsPath = prefs[Keys.WS_PATH] ?: "/ws",
+            host = prefs[Keys.HOST] ?: BuildConfig.DEFAULT_SERVER_HOST,
+            httpPort = prefs[Keys.HTTP_PORT] ?: BuildConfig.DEFAULT_HTTP_PORT,
+            wsPort = prefs[Keys.WS_PORT] ?: BuildConfig.DEFAULT_WS_PORT,
+            useTls = prefs[Keys.USE_TLS] ?: BuildConfig.DEFAULT_USE_TLS,
+            wsPath = prefs[Keys.WS_PATH] ?: BuildConfig.DEFAULT_WS_PATH,
         )
     }
 

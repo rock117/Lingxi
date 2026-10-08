@@ -5,6 +5,38 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+/** 读取仓库根目录 `.env`（app/ 的上一级），供默认服务器地址注入。 */
+fun loadRootEnv(): Map<String, String> {
+    val envFile = rootDir.parentFile.resolve(".env")
+    if (!envFile.isFile) return emptyMap()
+    val props = mutableMapOf<String, String>()
+    envFile.readLines().forEach { raw ->
+        val line = raw.trim()
+        if (line.isEmpty() || line.startsWith("#")) return@forEach
+        val idx = line.indexOf('=')
+        if (idx <= 0) return@forEach
+        val key = line.substring(0, idx).trim()
+        var value = line.substring(idx + 1).trim()
+        if ((value.startsWith("\"") && value.endsWith("\"")) ||
+            (value.startsWith("'") && value.endsWith("'"))
+        ) {
+            value = value.substring(1, value.length - 1)
+        }
+        props[key] = value
+    }
+    return props
+}
+
+val rootEnv = loadRootEnv()
+val defaultServerHost =
+    rootEnv["app_server_host"]
+        ?: rootEnv["ssh_server"]
+        ?: "10.0.2.2"
+val defaultHttpPort = rootEnv["app_http_port"] ?: "8000"
+val defaultWsPort = rootEnv["app_ws_port"] ?: defaultHttpPort
+val defaultUseTls = (rootEnv["app_use_tls"] ?: "false").lowercase() in setOf("1", "true", "yes")
+val defaultWsPath = rootEnv["app_ws_path"] ?: "/ws"
+
 android {
     namespace = "com.lingxi.app"
     compileSdk = 35
@@ -15,6 +47,13 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+
+        // 默认服务器来自仓库根目录 .env（见 app_server_host / ssh_server）
+        buildConfigField("String", "DEFAULT_SERVER_HOST", "\"$defaultServerHost\"")
+        buildConfigField("int", "DEFAULT_HTTP_PORT", defaultHttpPort)
+        buildConfigField("int", "DEFAULT_WS_PORT", defaultWsPort)
+        buildConfigField("boolean", "DEFAULT_USE_TLS", defaultUseTls.toString())
+        buildConfigField("String", "DEFAULT_WS_PATH", "\"$defaultWsPath\"")
     }
 
     buildTypes {
@@ -38,8 +77,14 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
+
+println(
+    "[lingxi] default server from .env: " +
+        "$defaultServerHost:$defaultHttpPort (tls=$defaultUseTls)",
+)
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")

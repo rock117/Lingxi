@@ -56,11 +56,11 @@ data class WsPushMessage(
 )
 
 data class ServerConfig(
-    val host: String = "10.0.2.2",
-    val httpPort: Int = 8000,
-    val wsPort: Int = 8000,
-    val useTls: Boolean = false,
-    val wsPath: String = "/ws",
+    val host: String = com.lingxi.app.BuildConfig.DEFAULT_SERVER_HOST,
+    val httpPort: Int = com.lingxi.app.BuildConfig.DEFAULT_HTTP_PORT,
+    val wsPort: Int = com.lingxi.app.BuildConfig.DEFAULT_WS_PORT,
+    val useTls: Boolean = com.lingxi.app.BuildConfig.DEFAULT_USE_TLS,
+    val wsPath: String = com.lingxi.app.BuildConfig.DEFAULT_WS_PATH,
 ) {
     fun httpBaseUrl(): String {
         val scheme = if (useTls) "https" else "http"

@@ -4,6 +4,19 @@
 
 详细设计与实现计划见 [PLAN.md](./PLAN.md)。
 
+## 目录
+
+- [项目结构](#项目结构)
+- [架构概览](#架构概览)
+- [技术栈](#技术栈)
+  - [后端 (`backend/`)](#后端-backend)
+  - [App (`app/`)](#app-app)
+- [快速开始](#快速开始)
+  - [后端](#后端)
+  - [App](#app)
+  - [部署后端到远端](#部署后端到远端)
+- [API 一览](#api-一览)
+
 ## 项目结构
 
 ```
@@ -94,10 +107,31 @@ powershell -ExecutionPolicy Bypass -File .\install-debug.ps1 -Logcat
 
 路径不对时改脚本参数或文件内变量即可。手机需开启 USB 调试，`adb devices` 显示 `device`。
 
-依赖仓库已配置阿里云镜像（见 `settings.gradle.kts`）；`gradlew` 的 Gradle 发行包改用腾讯云镜像。若仍超时，可继续用本机 Gradle + `install-debug.bat`。
+依赖仓库已配置国内镜像（`settings.gradle.kts`：阿里云 / 腾讯云 / 华为云优先，官方兜底）；`gradlew` 的 Gradle 发行包用腾讯云。首次拉 Compose 等大包仍可能较慢，之后有本地缓存会快很多。若仍超时，可用本机 Gradle + `install-debug.bat`。
 
 当前 App 为 **Mock 模式**：条件/通知在内存中读写，不请求后端。  
-设置页可先填好服务器地址（接入 API 后生效）；模拟器访问本机后端用 `10.0.2.2:8000`。
+设置页默认服务器地址在**构建时**从仓库根目录 `.env` 注入（`app_server_host`，缺省则用 `ssh_server`）；用户改过设置后以 DataStore 为准。本地调试可把 `.env` 改成 `10.0.2.2` 或设置页手动改。
+
+### 部署后端到远端
+
+1. 在仓库根目录配置 `.env`（可参考 `.env.example`）：`ssh_server` / `ssh_user` / `ssh_pwd` 等。  
+2. 安装依赖：`pip install paramiko python-dotenv`  
+3. 执行：
+
+```bash
+python script/deploy_backend.py
+```
+
+脚本会：上传 `backend/` → 远端 `cargo build --release` → 安装并重启 `lingxi-backend` systemd 服务（默认目录见 `deploy_remote_dir`，端口见 `app_http_port`）。
+
+机内健康检查（SSH 上）：
+
+```bash
+curl http://127.0.0.1:8000/api/health
+# 期望 {"status":"ok"}
+```
+
+**公网访问**：需在云厂商安全组放行 TCP `app_http_port`（默认 `8000`）。未放行时手机/外网连不上，但本机 `systemctl status lingxi-backend` 仍可为 active。
 
 ## API 一览
 

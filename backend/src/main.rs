@@ -27,7 +27,7 @@ async fn rocket() -> _ {
 
     let cfg = AppConfig::default();
 
-    // 初始化数据库（migration 由 sea-orm-cli 执行）
+    // 初始化数据库并自动执行 migrations（CREATE TABLE IF NOT EXISTS）
     let db = db::init_db(&cfg.database_url)
         .await
         .expect("数据库初始化失败");

@@ -3,6 +3,7 @@ package com.lingxi.app.data.api
 import com.lingxi.app.data.model.Condition
 import com.lingxi.app.data.model.CreateConditionRequest
 import com.lingxi.app.data.model.HealthResponse
+import com.lingxi.app.data.model.MsiResult
 import com.lingxi.app.data.model.NotificationItem
 import com.lingxi.app.data.model.UpdateConditionRequest
 import retrofit2.http.Body
@@ -16,15 +17,17 @@ import retrofit2.http.Query
 /**
  * 后端 REST 接口定义。
  *
- * TODO: UI 当前使用 [com.lingxi.app.data.mock.MockRepository]，尚未调用本接口。
- *  后续接入步骤：
- *  1. 用 [ApiClient.create] 按 ServerConfig 构造实例
- *  2. 在 Repository / ViewModel 中替换 Mock 读写
- *  3. 设置页「测试连接」改为调用 [health]
+ * 条件/通知 UI 仍走 Mock；市场情绪已调用 [sentiment]。
  */
 interface LingxiApi {
     @GET("api/health")
     suspend fun health(): HealthResponse
+
+    @GET("api/market/sentiment")
+    suspend fun sentiment(
+        @Query("days") days: Int = 5,
+        @Query("use_mock") useMock: Boolean = true,
+    ): MsiResult
 
     @GET("api/conditions")
     suspend fun listConditions(): List<Condition>

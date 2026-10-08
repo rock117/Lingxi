@@ -8,6 +8,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -28,13 +29,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lingxi.app.condition.ConditionListScreen
+import com.lingxi.app.market.SentimentScreen
 import com.lingxi.app.notification.NotificationListScreen
 import com.lingxi.app.viewmodel.ConditionViewModel
+import com.lingxi.app.viewmodel.MarketViewModel
 import com.lingxi.app.viewmodel.NotificationViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
+    marketViewModel: MarketViewModel,
     conditionViewModel: ConditionViewModel,
     notificationViewModel: NotificationViewModel,
     onOpenSettings: () -> Unit,
@@ -44,10 +48,16 @@ fun HomeScreen(
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val unread by notificationViewModel.unreadCount.collectAsStateWithLifecycle()
 
+    val title = when (tab) {
+        0 -> "市场情绪"
+        1 -> "条件"
+        else -> "通知"
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (tab == 0) "条件" else "通知") },
+                title = { Text(title) },
                 actions = {
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "设置")
@@ -60,12 +70,18 @@ fun HomeScreen(
                 NavigationBarItem(
                     selected = tab == 0,
                     onClick = { tab = 0 },
-                    icon = { Icon(Icons.Default.ListAlt, contentDescription = null) },
-                    label = { Text("条件") },
+                    icon = { Icon(Icons.Default.ShowChart, contentDescription = null) },
+                    label = { Text("情绪") },
                 )
                 NavigationBarItem(
                     selected = tab == 1,
                     onClick = { tab = 1 },
+                    icon = { Icon(Icons.Default.ListAlt, contentDescription = null) },
+                    label = { Text("条件") },
+                )
+                NavigationBarItem(
+                    selected = tab == 2,
+                    onClick = { tab = 2 },
                     icon = {
                         BadgedBox(
                             badge = {
@@ -83,10 +99,10 @@ fun HomeScreen(
         },
         floatingActionButton = {
             when (tab) {
-                0 -> FloatingActionButton(onClick = onCreateCondition) {
+                1 -> FloatingActionButton(onClick = onCreateCondition) {
                     Icon(Icons.Default.Add, contentDescription = "新建条件")
                 }
-                else -> FloatingActionButton(onClick = { notificationViewModel.pushMock() }) {
+                2 -> FloatingActionButton(onClick = { notificationViewModel.pushMock() }) {
                     Icon(Icons.Default.NotificationsActive, contentDescription = "模拟推送")
                 }
             }
@@ -98,7 +114,8 @@ fun HomeScreen(
                 .padding(padding),
         ) {
             when (tab) {
-                0 -> ConditionListScreen(
+                0 -> SentimentScreen(viewModel = marketViewModel)
+                1 -> ConditionListScreen(
                     viewModel = conditionViewModel,
                     onEdit = onEditCondition,
                 )
