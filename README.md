@@ -16,15 +16,18 @@
   - [后端](#后端)
   - [App](#app)
   - [部署后端到远端](#部署后端到远端)
+  - [远端 systemd 服务](#远端-systemd-服务)
 - [API 一览](#api-一览)
 
 ## 项目结构
 
 ```
 Lingxi/
-├── PLAN.md      # 详细实现计划
-├── backend/     # Rust 后端（Rocket + SeaORM + PostgreSQL + WebSocket）
-└── app/         # Kotlin Android App（Jetpack Compose）
+├── PLAN.md              # 详细实现计划
+├── docker-compose.yml   # 本地/服务器 PostgreSQL
+├── script/              # 部署等脚本（deploy_backend.py）
+├── backend/             # Rust 后端（Rocket + SeaORM + PostgreSQL + WebSocket）
+└── app/                 # Kotlin Android App（Jetpack Compose）
 ```
 
 ## 架构概览
@@ -126,16 +129,40 @@ powershell -ExecutionPolicy Bypass -File .\install-debug.ps1 -Logcat
 
 ### 部署后端到远端
 
-1. 在仓库根目录配置 `.env`（可参考 `.env.example`）：`ssh_server` / `ssh_user` / `ssh_pwd` 等。  
-2. 安装依赖：`pip install paramiko python-dotenv`  
+1. 在仓库根目录配置 `.env`（可参考 `.env.example`），至少包括：
+   - `ssh_server` / `ssh_port` / `ssh_user` / `ssh_pwd`
+   - `deploy_remote_dir`：远端源码编译目录（默认 `/home/rock/project/lingxi`）
+   - `deploy_app_dir`：远端运行目录（默认 `/home/rock/apps/lingxi`）
+   - `deploy_database_url`：写入 systemd 的数据库连接串（可与本地 `DATABASE_URL` 不同）
+   - `app_http_port`：服务端口（默认 `8000`）
+2. 安装依赖：`pip install paramiko python-dotenv`
 3. 执行：
 
 ```bash
 python script/deploy_backend.py
 ```
 
-脚本会：上传 `backend/` → 远端 `cargo build --release` → 按 `.env` 的 `DATABASE_URL` 写入 systemd 并重启。  
-远端也需先有 Postgres（推荐同样 `docker compose up -d`，或把 `DATABASE_URL` 指到已有实例）。
+**默认步骤：**
+
+1. 读取 `.env`  
+2. SSH 连接服务器  
+3. 上传本地 `backend/` 到 `deploy_remote_dir`（尊重 `.gitignore`）  
+4. 远端 `cargo build --release`  
+5. 将二进制安装到 `deploy_app_dir/lingxi-backend`  
+6. 写入/覆盖 systemd 单元 `lingxi-backend.service` 并 `restart`  
+7. 请求 `http://127.0.0.1:<port>/api/health` 做健康检查  
+
+已有同名服务时**不会新建第二个服务**，只覆盖同一 unit 并重启；会有短暂中断。
+
+**常用参数：**
+
+| 参数 | 含义 |
+|---|---|
+| `--dry-run` | 只列出将上传的文件，不操作服务器 |
+| `--skip-build` | 只上传，不编译 |
+| `--skip-restart` | 上传+编译，不改 systemd |
+| `--service-only` | 不上传/编译，只按 `deploy_app_dir` 安装并重启服务 |
+| `--remote-dir` / `--app-dir` | 覆盖编译目录 / 运行目录 |
 
 机内健康检查（SSH 上）：
 
@@ -144,7 +171,56 @@ curl http://127.0.0.1:8000/api/health
 # 期望 {"status":"ok"}
 ```
 
-**公网访问**：需在云厂商安全组放行 TCP `app_http_port`（默认 `8000`）。未放行时手机/外网连不上，但本机 `systemctl status lingxi-backend` 仍可为 active。
+**公网访问**：需在云厂商安全组放行 TCP `app_http_port`（默认 `8000`）。
+
+### 远端 systemd 服务
+
+部署脚本安装的服务名：**`lingxi-backend`**。
+
+| 项 | 默认值 |
+|---|---|
+| 单元文件 | `/etc/systemd/system/lingxi-backend.service` |
+| 二进制 | `/home/rock/apps/lingxi/lingxi-backend`（即 `deploy_app_dir`） |
+| 工作目录 | `/home/rock/apps/lingxi` |
+| 监听 | `0.0.0.0:8000`（`HOST` / `PORT`） |
+| 数据库 | `deploy_database_url` 写入的 `DATABASE_URL` |
+
+在服务器上管理（需 root / sudo）：
+
+```bash
+# 启动 / 停止 / 重启
+sudo systemctl start lingxi-backend
+sudo systemctl stop lingxi-backend
+sudo systemctl restart lingxi-backend
+
+# 状态
+sudo systemctl status lingxi-backend
+
+# 是否开机自启
+sudo systemctl enable lingxi-backend
+sudo systemctl disable lingxi-backend
+
+# 实时日志
+sudo journalctl -u lingxi-backend -f
+
+# 最近日志
+sudo journalctl -u lingxi-backend -n 100 --no-pager
+```
+
+改 unit 或环境变量后需：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart lingxi-backend
+```
+
+也可在本机只刷新服务配置：
+
+```bash
+python script/deploy_backend.py --service-only
+```
+
+**注意：** 不要同时手动 `cargo run` / 前台跑二进制与 systemd 抢同一端口（默认 `8000`）。调试时先 `sudo systemctl stop lingxi-backend`。
 
 ## API 一览
 
