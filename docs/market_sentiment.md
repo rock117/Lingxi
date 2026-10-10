@@ -936,3 +936,5 @@ limit_down_count = count(change_pct <= -LIMIT_PCT)
 ## 13. 定位
 
 短线情绪仪表盘，非交易指令。禁止只改代码不改本文档。
+
+中期趋势（`MA20` / `MA60` 家数结构）见独立规范 [`mid_term_trend.md`](./mid_term_trend.md)，**不并入**本指标三层加权。

@@ -49,7 +49,7 @@ fun HomeScreen(
     val unread by notificationViewModel.unreadCount.collectAsStateWithLifecycle()
 
     val title = when (tab) {
-        0 -> "市场情绪"
+        0 -> "短线情绪 · 中期结构"
         1 -> "条件"
         else -> "通知"
     }

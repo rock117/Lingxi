@@ -190,3 +190,77 @@ pub struct MsiResult {
     pub diagnostics: MsiDiagnostics,
     pub calculated_at: String,
 }
+
+// ---------------------------------------------------------------------------
+// 中期趋势 MTT（规范 `docs/mid_term_trend.md`）
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MttStatus {
+    MidBullConfirmed,
+    MidBullGrey,
+    MidNeutral,
+    MidBearGrey,
+    MidBearConfirmed,
+}
+
+impl MttStatus {
+    pub fn from_score(score: f64) -> Self {
+        const MTT_HIGH: f64 = 65.0;
+        const MTT_LOW: f64 = 35.0;
+        const MTT_GREY_BULL_LO: f64 = 60.0;
+        const MTT_GREY_BULL_HI: f64 = 65.0;
+        const MTT_GREY_BEAR_LO: f64 = 35.0;
+        const MTT_GREY_BEAR_HI: f64 = 40.0;
+        if score > MTT_HIGH {
+            Self::MidBullConfirmed
+        } else if (MTT_GREY_BULL_LO..=MTT_GREY_BULL_HI).contains(&score) {
+            Self::MidBullGrey
+        } else if score < MTT_LOW {
+            Self::MidBearConfirmed
+        } else if (MTT_GREY_BEAR_LO..=MTT_GREY_BEAR_HI).contains(&score) {
+            Self::MidBearGrey
+        } else {
+            Self::MidNeutral
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::MidBullConfirmed => "中期偏多",
+            Self::MidBullGrey => "偏多灰区",
+            Self::MidNeutral => "中性",
+            Self::MidBearGrey => "偏空灰区",
+            Self::MidBearConfirmed => "中期偏空",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MttCounts {
+    pub bull: usize,
+    pub bear: usize,
+    pub neutral: usize,
+    pub classified: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MttDiagnostics {
+    pub deviation_median: f64,
+    pub nh_nl: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MttResult {
+    pub value: f64,
+    pub status: MttStatus,
+    pub trend_raw: f64,
+    pub ma_type: String,
+    pub ma_mid: usize,
+    pub ma_long: usize,
+    pub use_slope_filter: bool,
+    pub counts: MttCounts,
+    pub diagnostics: MttDiagnostics,
+    pub calculated_at: String,
+}

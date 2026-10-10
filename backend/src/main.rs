@@ -78,6 +78,7 @@ async fn rocket() -> _ {
                 routes::notification::list,
                 routes::notification::mark_read,
                 market::routes::sentiment,
+                market::routes::mid_term_trend,
                 ws::ws_handler,
             ],
         )

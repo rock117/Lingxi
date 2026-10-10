@@ -1,14 +1,12 @@
-//! 市场情绪指标（MSI）模块 —— 三层架构
+//! 市场指标模块
 //!
-//! **规范（Source of Truth）：** `docs/market_sentiment.md`
-//!
-//! - Direction 50%：宽度 + 资金 + 开盘缺口 + 结构确认 + 新高新低
-//! - Intensity 25%：有方向量能 + 涨跌停压力
-//! - Constraint 25%：真实高低点位置 + 日内位置 + 涨跌惯性
+//! - MSI 短线情绪：`docs/market_sentiment.md`
+//! - MTT 中期趋势：`docs/mid_term_trend.md`
 //!
 //! 算法变更须先改文档再改代码。
 
 pub mod calculator;
 pub mod domain;
+pub mod mid_term;
 pub mod mock_data;
 pub mod routes;

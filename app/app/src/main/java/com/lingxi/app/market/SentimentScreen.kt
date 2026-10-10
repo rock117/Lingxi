@@ -29,17 +29,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lingxi.app.data.model.MsiComponents
 import com.lingxi.app.data.model.MsiResult
+import com.lingxi.app.data.model.MttResult
+import com.lingxi.app.data.model.comboOutlook
+import com.lingxi.app.data.model.mttStatusLabel
+import com.lingxi.app.data.model.scoreBandLabel
 import com.lingxi.app.viewmodel.MarketViewModel
 import kotlin.math.roundToInt
 
 @Composable
 fun SentimentScreen(viewModel: MarketViewModel) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
+    val hasData = ui.result != null || ui.mtt != null
 
     Column(
         modifier = Modifier
@@ -52,7 +58,7 @@ fun SentimentScreen(viewModel: MarketViewModel) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "短线情绪参考，非买卖指令",
+                "短线情绪 · 中期结构",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -61,14 +67,14 @@ fun SentimentScreen(viewModel: MarketViewModel) {
             }
         }
 
-        if (ui.loading && ui.result == null) {
+        if (ui.loading && !hasData) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center,
             ) {
                 CircularProgressIndicator()
             }
-        } else if (ui.error != null && ui.result == null) {
+        } else if (ui.error != null && !hasData) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -77,13 +83,13 @@ fun SentimentScreen(viewModel: MarketViewModel) {
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text("加载失败", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(8.dp))
+                Spacer(modifier.height(8.dp))
                 Text(
                     ui.error ?: "",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
                 )
-                Spacer(Modifier.height(4.dp))
+                Spacer(modifier.height(4.dp))
                 Text(
                     ui.serverHint,
                     style = MaterialTheme.typography.bodySmall,
@@ -94,25 +100,25 @@ fun SentimentScreen(viewModel: MarketViewModel) {
                     Text("重试")
                 }
             }
-        } else if (ui.result != null) {
+        } else if (hasData) {
             if (ui.loading) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
             if (ui.error != null) {
                 Text(
-                    "刷新失败：${ui.error}",
+                    "部分刷新失败：${ui.error}",
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
             }
-            SentimentContent(result = ui.result!!)
+            SentimentContent(msi = ui.result, mtt = ui.mtt)
         }
     }
 }
 
 @Composable
-private fun SentimentContent(result: MsiResult) {
+private fun SentimentContent(msi: MsiResult?, mtt: MttResult?) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -120,63 +126,126 @@ private fun SentimentContent(result: MsiResult) {
             .padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        val tone = msiTone(result.value)
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
+        DualScoreHeader(msi = msi, mtt = mtt)
+
+        if (mtt != null) {
+            SectionTitle("中期 MTT")
+            LayerBar("中期趋势", mtt.value)
             Text(
-                text = result.value.roundToInt().toString(),
-                fontSize = 64.sp,
-                fontWeight = FontWeight.Bold,
-                color = tone,
-            )
-            Text(
-                result.signal.label,
-                style = MaterialTheme.typography.titleMedium,
-                color = tone,
-            )
-            Text(
-                result.signal.advice,
+                "多 ${mtt.counts.bull} · 空 ${mtt.counts.bear} · 纠缠 ${mtt.counts.neutral}",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(4.dp))
             Text(
-                "窗口 ${result.days} 日 · ${result.calculatedAt}",
+                "MA${mtt.maMid}/${mtt.maLong} · ${mtt.maType.uppercase()}" +
+                    if (mtt.useSlopeFilter) " · 斜率过滤" else "",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
-        SectionTitle("三层")
-        LayerBar("方向 Direction", result.layers.direction)
-        LayerBar("强度 Intensity", result.layers.intensity)
-        LayerBar("约束 Constraint", result.layers.constraint)
+        if (msi != null) {
+            SectionTitle("短线三层")
+            LayerBar("方向 Direction", msi.layers.direction)
+            LayerBar("强度 Intensity", msi.layers.intensity)
+            LayerBar("约束 Constraint", msi.layers.constraint)
 
-        SectionTitle("信号上下文")
-        Text(
-            "量能 ${result.signal.volumeStatus} · 倍率 ${"%.2f".format(result.signal.volumeRatio)}",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        Text(
-            "位置 ${result.signal.priceStatus} · ${"%.0f".format(result.signal.pricePosition * 100)}%",
-            style = MaterialTheme.typography.bodyMedium,
-        )
+            SectionTitle("信号上下文")
+            Text(
+                "量能 ${msi.signal.volumeStatus} · 倍率 ${"%.2f".format(msi.signal.volumeRatio)}",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "位置 ${msi.signal.priceStatus} · ${"%.0f".format(msi.signal.pricePosition * 100)}%",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "${msi.signal.label} · ${msi.signal.advice}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
-        SectionTitle("分量")
-        ComponentGrid(result.components)
+            SectionTitle("分量")
+            ComponentGrid(msi.components)
 
-        SectionTitle("诊断")
-        val d = result.diagnostics
+            SectionTitle("诊断")
+            val d = msi.diagnostics
+            Text(
+                "样本 ${d.sampleSize} · 涨 ${d.upCount} / 跌 ${d.downCount} / 平 ${d.flatCount}",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "涨停 ${d.limitUpCount} · 跌停 ${d.limitDownCount} · 新高 ${d.newHighCount} · 新低 ${d.newLowCount}",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (mtt != null) {
+                Text(
+                    "中期偏离中位 ${"%.1f".format(mtt.diagnostics.deviationMedian * 100)}%" +
+                        " · 20日新高新低 ${"%.1f".format(mtt.diagnostics.nhNl)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DualScoreHeader(msi: MsiResult?, mtt: MttResult?) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.Top,
+        ) {
+            ScoreColumn(
+                title = "短线 MSI",
+                value = msi?.value,
+                subtitle = msi?.let { scoreBandLabel(it.value) } ?: "—",
+            )
+            ScoreColumn(
+                title = "中期 MTT",
+                value = mtt?.value,
+                subtitle = mtt?.let { mttStatusLabel(it.status) } ?: "—",
+            )
+        }
+        Spacer(Modifier.height(12.dp))
         Text(
-            "样本 ${d.sampleSize} · 涨 ${d.upCount} / 跌 ${d.downCount} / 平 ${d.flatCount}",
-            style = MaterialTheme.typography.bodyMedium,
+            comboOutlook(msi?.value, mtt?.value),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 8.dp),
         )
+        Spacer(Modifier.height(4.dp))
+        val meta = buildList {
+            msi?.let { add("窗口 ${it.days} 日") }
+            mtt?.let { add("MA${it.maMid}/${it.maLong}") }
+            val ts = msi?.calculatedAt ?: mtt?.calculatedAt
+            if (ts != null) add(ts)
+        }.joinToString(" · ")
         Text(
-            "涨停 ${d.limitUpCount} · 跌停 ${d.limitDownCount} · 新高 ${d.newHighCount} · 新低 ${d.newLowCount}",
-            style = MaterialTheme.typography.bodyMedium,
+            meta,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
         )
+    }
+}
+
+@Composable
+private fun ScoreColumn(title: String, value: Double?, subtitle: String) {
+    val tone = value?.let { msiTone(it) } ?: MaterialTheme.colorScheme.onSurfaceVariant
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = value?.roundToInt()?.toString() ?: "—",
+            fontSize = 44.sp,
+            fontWeight = FontWeight.Bold,
+            color = tone,
+        )
+        Text(title, style = MaterialTheme.typography.labelMedium)
+        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = tone)
     }
 }
 
@@ -264,8 +333,8 @@ private fun ComponentGrid(c: MsiComponents) {
 }
 
 private fun msiTone(value: Double): Color = when {
-    value > 65 -> Color(0xFFC62828) // 偏多偏红（A 股习惯）
+    value > 65 -> Color(0xFFC62828)
     value < 35 -> Color(0xFF2E7D32)
-    value >= 60 || value <= 40 -> Color(0xFFF9A825) // 灰区偏黄
+    value >= 60 || value <= 40 -> Color(0xFFF9A825)
     else -> Color(0xFF546E7A)
 }
