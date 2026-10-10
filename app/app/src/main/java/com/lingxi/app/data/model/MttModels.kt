@@ -79,7 +79,8 @@ fun comboOutlook(msi: Double?, mtt: Double?): String {
         mBear && tBear ->
             if (soft) "倾向顺势走弱：短线偏冷，中期结构也偏空"
             else "顺势走弱：短线冷，中期结构也偏空"
-        tBull || tBear -> "中期有结构，短线多空胶着"
+        tBull -> "中期偏多，短线多空胶着"
+        tBear -> "中期偏空，短线多空胶着"
         mBull || mBear -> "短线有脉冲，中期尚无结构"
         else -> "短线与中期均处中性"
     }

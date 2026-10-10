@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -83,19 +84,19 @@ fun SentimentScreen(viewModel: MarketViewModel) {
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text("加载失败", style = MaterialTheme.typography.titleMedium)
-                Spacer(modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     ui.error ?: "",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
                 )
-                Spacer(modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     ui.serverHint,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(16.dp))
                 TextButton(onClick = { viewModel.refresh() }) {
                     Text("重试")
                 }
@@ -210,7 +211,7 @@ private fun DualScoreHeader(msi: MsiResult?, mtt: MttResult?) {
                 subtitle = mtt?.let { mttStatusLabel(it.status) } ?: "—",
             )
         }
-        Spacer(Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(12.dp))
         Text(
             comboOutlook(msi?.value, mtt?.value),
             style = MaterialTheme.typography.titleMedium,
@@ -218,7 +219,7 @@ private fun DualScoreHeader(msi: MsiResult?, mtt: MttResult?) {
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = 8.dp),
         )
-        Spacer(Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         val meta = buildList {
             msi?.let { add("窗口 ${it.days} 日") }
             mtt?.let { add("MA${it.maMid}/${it.maLong}") }
@@ -269,7 +270,7 @@ private fun LayerBar(label: String, score: Double) {
             Text(label, style = MaterialTheme.typography.bodyMedium)
             Text("%.1f".format(score), style = MaterialTheme.typography.bodyMedium)
         }
-        Spacer(Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         LinearProgressIndicator(
             progress = { (score / 100.0).toFloat().coerceIn(0f, 1f) },
             modifier = Modifier
@@ -278,6 +279,9 @@ private fun LayerBar(label: String, score: Double) {
                 .clip(RoundedCornerShape(4.dp)),
             color = msiTone(score),
             trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            strokeCap = StrokeCap.Butt,
+            gapSize = 0.dp,
+            drawStopIndicator = {},
         )
     }
 }
@@ -323,7 +327,7 @@ private fun ComponentGrid(c: MsiComponents) {
                 Spacer(modifier = Modifier.weight(1f))
             }
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(8.dp))
     }
     Text(
         "量能倍率 ${"%.2f".format(c.volumeRatio)}",
