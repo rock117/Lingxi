@@ -1,3 +1,4 @@
+mod access_log;
 mod config;
 mod db;
 mod engine;
@@ -137,6 +138,7 @@ async fn rocket() -> _ {
         .manage(miana)
         .manage(realtime_cache)
         .manage(hub)
+        .attach(access_log::AccessLog)
         .attach(cors)
         .mount(
             "/",
