@@ -815,7 +815,7 @@ GET /api/market/sentiment?days=5
 |---|---|
 | `days` | 窗口交易日数，默认 `5`，`clamp` 到 `[3, 30]` |
 
-默认读 `sc_stock` + `sc_stock_kline_d1_bfq`（与 SecuritiesCollector 共用库）。  
+默认读 `sc_stock` + `sc_stock_kline_d1_bfq`（与 SecuritiesCollector 共用库）；最近 N 个交易日优先取自 `sc_trade_calendar`。  
 **最新交易日（仅 MSI）**：上海时区周一至周五 `09:30–18:00` 不读库，改调 Miana `GET /api/stock/v3/realtime`（代码格式 `代码.市场后缀`，单次最多 20 支，全局限流约 480 次/分钟）；其余时间最新日仍读库。MTT 不走此路径。  
 若需本地假行情：服务端环境变量 **`MARKET_USE_MOCK=true`**（无查询参数）。  
 库内日 K：`change_pct = (close - pre_close) / pre_close * 100`；盘中实时：直接用接口 `changeRate`。仅 `is_active`；无数据时 `400`。

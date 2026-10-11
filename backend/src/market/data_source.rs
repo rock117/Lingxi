@@ -3,10 +3,13 @@
 //! 表定义见 `SecuritiesCollector/backend/migrations`：
 //! - `sc_stock`
 //! - `sc_stock_kline_d1_bfq`
+//! - `sc_trade_calendar`（最近 N 个交易日，避免对 K 线表 DISTINCT）
 //!
 //! 仅 MSI：盘中（上海时区周一至周五 09:30–18:00）最新交易日改用 Miana 实时行情覆盖。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use chrono::NaiveDate;
 use sea_orm::{DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
@@ -16,6 +19,19 @@ use super::miana::MianaClient;
 use super::realtime_cache::RealtimeDayCache;
 use super::session;
 use crate::error::{AppError, AppResult};
+
+/// 库内窗口结果短缓存（MTT 约 70 日 × 全市场，避免刷新连打）。
+const WINDOW_CACHE_TTL: Duration = Duration::from_secs(60);
+
+struct CachedWindow {
+    fetched_at: Instant,
+    input: MarketDataInput,
+}
+
+fn window_cache() -> &'static Mutex<HashMap<usize, CachedWindow>> {
+    static CACHE: OnceLock<Mutex<HashMap<usize, CachedWindow>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 #[derive(Debug, FromQueryResult)]
 struct KlineRow {
@@ -39,13 +55,53 @@ fn change_pct(close: f64, pre_close: f64) -> f64 {
 
 /// 取最近 `days` 个交易日、全部 `is_active` 股票的日 K，组装为 MSI/MTT 输入。
 ///
-/// 交易日按 `sc_stock_kline_d1_bfq.trade_date` 去重后取最近 N 日（升序返回）。
+/// 优先用 `sc_trade_calendar` 取最近 N 日；日历为空时回退到对 K 线表 DISTINCT。
+/// 结果短缓存 60s（按 `days` 分槽）。
 pub async fn load_market_window(
     db: &DatabaseConnection,
     days: usize,
 ) -> Result<MarketDataInput, DbErr> {
     let days = days.max(1);
-    let sql = r#"
+
+    if let Ok(guard) = window_cache().lock() {
+        if let Some(hit) = guard.get(&days) {
+            if hit.fetched_at.elapsed() < WINDOW_CACHE_TTL {
+                tracing::debug!(days, age_ms = hit.fetched_at.elapsed().as_millis() as u64, "命中行情窗口缓存");
+                return Ok(hit.input.clone());
+            }
+        }
+    }
+
+    let t0 = Instant::now();
+    let use_calendar = trade_calendar_has_rows(db).await?;
+    let sql = if use_calendar {
+        // 从轻量日历出发，走 (trade_date, symbol) 覆盖索引；排序交给 rows_to_input
+        r#"
+WITH dates AS (
+    SELECT trade_date
+    FROM sc_trade_calendar
+    ORDER BY trade_date DESC
+    LIMIT $1
+)
+SELECT
+    k.symbol,
+    k.trade_date,
+    k.open::double precision   AS open,
+    k.high::double precision   AS high,
+    k.low::double precision    AS low,
+    k.close::double precision  AS close,
+    k.pre_close::double precision AS pre_close,
+    k.amount::double precision AS amount
+FROM dates d
+INNER JOIN sc_stock_kline_d1_bfq k
+    ON k.trade_date = d.trade_date
+INNER JOIN sc_stock s
+    ON s.symbol = k.symbol
+   AND s.is_active = TRUE
+"#
+    } else {
+        tracing::warn!("sc_trade_calendar 为空，回退 DISTINCT sc_stock_kline_d1_bfq.trade_date");
+        r#"
 WITH dates AS (
     SELECT DISTINCT trade_date
     FROM sc_stock_kline_d1_bfq
@@ -61,14 +117,14 @@ SELECT
     k.close::double precision  AS close,
     k.pre_close::double precision AS pre_close,
     k.amount::double precision AS amount
-FROM sc_stock_kline_d1_bfq k
+FROM dates d
+INNER JOIN sc_stock_kline_d1_bfq k
+    ON k.trade_date = d.trade_date
 INNER JOIN sc_stock s
     ON s.symbol = k.symbol
    AND s.is_active = TRUE
-INNER JOIN dates d
-    ON d.trade_date = k.trade_date
-ORDER BY k.trade_date ASC, k.symbol ASC
-"#;
+"#
+    };
 
     let rows = KlineRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -78,7 +134,45 @@ ORDER BY k.trade_date ASC, k.symbol ASC
     .all(db)
     .await?;
 
-    Ok(rows_to_input(rows))
+    let n = rows.len();
+    let input = rows_to_input(rows);
+    tracing::info!(
+        days,
+        rows = n,
+        snapshots = input.snapshots.len(),
+        calendar = use_calendar,
+        elapsed_ms = t0.elapsed().as_millis() as u64,
+        "已加载行情窗口"
+    );
+
+    if let Ok(mut guard) = window_cache().lock() {
+        guard.insert(
+            days,
+            CachedWindow {
+                fetched_at: Instant::now(),
+                input: input.clone(),
+            },
+        );
+    }
+
+    Ok(input)
+}
+
+async fn trade_calendar_has_rows(db: &DatabaseConnection) -> Result<bool, DbErr> {
+    #[derive(Debug, FromQueryResult)]
+    struct One {
+        #[allow(dead_code)]
+        n: i64,
+    }
+
+    let row = One::find_by_statement(Statement::from_string(
+        DbBackend::Postgres,
+        "SELECT 1::bigint AS n FROM sc_trade_calendar LIMIT 1".to_string(),
+    ))
+    .one(db)
+    .await?;
+
+    Ok(row.is_some())
 }
 
 /// 加载窗口；若处于盘中实时窗口，用 Miana 覆盖/补齐最新交易日。
@@ -219,7 +313,10 @@ pub async fn probe_market_tables(db: &DatabaseConnection) -> Result<(i64, Option
         r#"
 SELECT
     (SELECT COUNT(*)::bigint FROM sc_stock WHERE is_active = TRUE) AS stock_count,
-    (SELECT MAX(trade_date) FROM sc_stock_kline_d1_bfq) AS last_date
+    COALESCE(
+        (SELECT MAX(trade_date) FROM sc_trade_calendar),
+        (SELECT MAX(trade_date) FROM sc_stock_kline_d1_bfq)
+    ) AS last_date
 "#
         .to_string(),
     ))
