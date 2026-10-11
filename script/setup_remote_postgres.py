@@ -225,6 +225,7 @@ WorkingDirectory={APP_DIR}
 Environment=HOST=0.0.0.0
 Environment=PORT={LISTEN}
 Environment=DATABASE_URL={db_esc}
+Environment=MARKET_USE_MOCK=false
 Environment=RUST_LOG=info
 ExecStart={APP_DIR}/lingxi-backend
 Restart=on-failure

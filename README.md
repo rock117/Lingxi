@@ -46,7 +46,7 @@ Lingxi/
 ```
 
 - **后台 API**：市场情绪 / 中期趋势默认读 PostgreSQL 中 SecuritiesCollector 写入的 `sc_stock`、`sc_stock_kline_d1_bfq`；条件匹配结果经 WebSocket 推送并持久化。
-- **App**：情绪页请求真实 MSI/MTT；条件/通知 UI 仍可为本地 Mock（见代码）。
+- **App**：情绪页请求 MSI/MTT（是否假行情由服务端 `MARKET_USE_MOCK` 决定）；条件/通知列表暂仍用本地内存数据。
 
 ## 技术栈
 
@@ -61,7 +61,7 @@ Lingxi/
 - ViewModel + StateFlow — 状态管理
 - DataStore Preferences — 服务器配置本地持久化
 - Navigation Compose — 页面导航
-- Retrofit / OkHttp / WebSocket — 情绪页走真实 MSI/MTT；条件/通知仍可 Mock
+- Retrofit / OkHttp / WebSocket — 情绪与健康检查走后端；条件/通知列表暂本地持久前内存实现
 
 ## 快速开始
 
@@ -123,8 +123,9 @@ powershell -ExecutionPolicy Bypass -File .\install-debug.ps1 -Logcat
 
 依赖仓库已配置国内镜像（`settings.gradle.kts`：阿里云 / 腾讯云 / 华为云优先，官方兜底）；`gradlew` 的 Gradle 发行包用腾讯云。首次拉 Compose 等大包仍可能较慢，之后有本地缓存会快很多。若仍超时，可用本机 Gradle + `install-debug.bat`。
 
-当前 App 为 **Mock 模式**：条件/通知在内存中读写，不请求后端。  
-设置页默认服务器地址在**构建时**从仓库根目录 `.env` 注入（`app_server_host`，缺省则用 `ssh_server`）；用户改过设置后以 DataStore 为准。本地调试可把 `.env` 改成 `10.0.2.2` 或设置页手动改。
+情绪页与「测试连接」走真实后端；条件/通知列表暂仍在 App 内存中（待接 API）。  
+行情是否使用假数据由服务端环境变量 `MARKET_USE_MOCK` 控制（默认 `false`），客户端无 mock 开关。  
+设置页默认服务器地址在**构建时**从仓库根目录 `.env` 注入（`app_server_host`，缺省则用 `ssh_server`）；用户改过设置后以 DataStore 为准。
 
 ### 部署后端到远端
 

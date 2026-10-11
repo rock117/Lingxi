@@ -8,12 +8,7 @@ import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import java.util.concurrent.TimeUnit
 
-/**
- * Retrofit / OkHttp 工厂。
- *
- * TODO: 当前未接入；Mock 阶段不要从 ViewModel 调用。
- *  接入时：`ApiClient.create(serverConfig)` → [LingxiApi]
- */
+/** Retrofit / OkHttp 工厂：`ApiClient.create(serverConfig)` → [LingxiApi]。 */
 object ApiClient {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -22,7 +17,7 @@ object ApiClient {
 
     private val okHttp = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
         .build()
 
     fun create(config: ServerConfig): LingxiApi {

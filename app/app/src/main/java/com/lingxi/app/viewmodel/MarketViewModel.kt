@@ -49,10 +49,10 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 val api = ApiClient.create(cfg)
                 val msiDeferred = async {
-                    runCatching { api.sentiment(days = days, useMock = false) }
+                    runCatching { api.sentiment(days = days) }
                 }
                 val mttDeferred = async {
-                    runCatching { api.midTermTrend(useMock = false) }
+                    runCatching { api.midTermTrend() }
                 }
                 val msiResult = msiDeferred.await()
                 val mttResult = mttDeferred.await()

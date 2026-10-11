@@ -16,9 +16,9 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 
 /**
- * 后端 REST 接口定义。
+ * 后端 REST 接口。
  *
- * 条件/通知 UI 仍走 Mock；市场情绪/中期趋势已分别调用 [sentiment] / [midTermTrend]。
+ * 行情类接口无客户端 mock 参数；是否使用假行情由服务端 `MARKET_USE_MOCK` 决定。
  */
 interface LingxiApi {
     @GET("api/health")
@@ -27,13 +27,10 @@ interface LingxiApi {
     @GET("api/market/sentiment")
     suspend fun sentiment(
         @Query("days") days: Int = 5,
-        @Query("use_mock") useMock: Boolean = false,
     ): MsiResult
 
     @GET("api/market/mid-term-trend")
-    suspend fun midTermTrend(
-        @Query("use_mock") useMock: Boolean = false,
-    ): MttResult
+    suspend fun midTermTrend(): MttResult
 
     @GET("api/conditions")
     suspend fun listConditions(): List<Condition>

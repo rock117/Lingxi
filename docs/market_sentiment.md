@@ -808,15 +808,16 @@ price_low  = (range_position_raw <  PRICE_LOW)
 ## 10. API
 
 ```
-GET /api/market/sentiment?days=5&use_mock=false
+GET /api/market/sentiment?days=5
 ```
 
 | 参数 | 含义 |
 |---|---|
 | `days` | 窗口交易日数，默认 `5`，`clamp` 到 `[3, 30]` |
-| `use_mock` | 默认 `false`：读 `sc_stock` + `sc_stock_kline_d1_bfq`（与 SecuritiesCollector 共用库）；`true` 用本地 Mock |
 
-真实行情：`change_pct = (close - pre_close) / pre_close * 100`；仅 `sc_stock.is_active = TRUE`；无数据时返回 `400`。
+默认读 `sc_stock` + `sc_stock_kline_d1_bfq`（与 SecuritiesCollector 共用库）。  
+若需本地假行情：服务端环境变量 **`MARKET_USE_MOCK=true`**（无查询参数）。  
+`change_pct = (close - pre_close) / pre_close * 100`；仅 `is_active`；无数据时 `400`。
 
 ### 10.1 响应字段
 

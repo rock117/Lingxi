@@ -2,12 +2,14 @@
 //! - MSI：`docs/market_sentiment.md` §10
 //! - MTT：`docs/mid_term_trend.md` §10
 //!
-//! 默认读取 `sc_stock` + `sc_stock_kline_d1_bfq`；`use_mock=true` 时走本地 Mock。
+//! 默认读 `sc_stock` + `sc_stock_kline_d1_bfq`。
+//! 若需本地假行情：服务端环境变量 `MARKET_USE_MOCK=true`（无查询参数）。
 
 use rocket::get;
 use rocket::serde::json::Json;
 use sea_orm::DatabaseConnection;
 
+use crate::config::AppConfig;
 use crate::error::{AppError, AppResult};
 
 use super::calculator;
@@ -26,6 +28,7 @@ async fn load_input(
     mock_bias: f64,
 ) -> AppResult<super::domain::MarketDataInput> {
     if use_mock {
+        tracing::warn!("MARKET_USE_MOCK=true，使用本地 Mock 行情 (days={})", days);
         return Ok(mock_data::generate_mock_data_with_bias(days, mock_bias));
     }
 
@@ -41,21 +44,29 @@ async fn load_input(
         "已加载真实行情: days={} last_sample={} first={} last={}",
         input.snapshots.len(),
         last,
-        input.snapshots.first().map(|s| s.date.as_str()).unwrap_or("-"),
-        input.snapshots.last().map(|s| s.date.as_str()).unwrap_or("-"),
+        input
+            .snapshots
+            .first()
+            .map(|s| s.date.as_str())
+            .unwrap_or("-"),
+        input
+            .snapshots
+            .last()
+            .map(|s| s.date.as_str())
+            .unwrap_or("-"),
     );
     Ok(input)
 }
 
-/// `GET /api/market/sentiment?days=5&use_mock=false`
-#[get("/api/market/sentiment?<days>&<use_mock>")]
+/// `GET /api/market/sentiment?days=5`
+#[get("/api/market/sentiment?<days>")]
 pub async fn sentiment(
     db: &rocket::State<DatabaseConnection>,
+    cfg: &rocket::State<AppConfig>,
     days: Option<usize>,
-    use_mock: Option<bool>,
 ) -> AppResult<Json<MsiResult>> {
     let days = days.unwrap_or(5).clamp(3, 30);
-    let use_mock = use_mock.unwrap_or(false);
+    let use_mock = cfg.market_use_mock;
 
     let input = load_input(db.inner(), days, use_mock, 0.0).await?;
     let result = calculator::calculate_msi(&input);
@@ -73,13 +84,13 @@ pub async fn sentiment(
     Ok(Json(result))
 }
 
-/// `GET /api/market/mid-term-trend?use_mock=false`
-#[get("/api/market/mid-term-trend?<use_mock>")]
+/// `GET /api/market/mid-term-trend`
+#[get("/api/market/mid-term-trend")]
 pub async fn mid_term_trend(
     db: &rocket::State<DatabaseConnection>,
-    use_mock: Option<bool>,
+    cfg: &rocket::State<AppConfig>,
 ) -> AppResult<Json<MttResult>> {
-    let use_mock = use_mock.unwrap_or(false);
+    let use_mock = cfg.market_use_mock;
 
     let input = load_input(db.inner(), MTT_LOOKBACK_DAYS, use_mock, 0.15).await?;
     let result = mid_term::calculate_mtt(&input);

@@ -26,22 +26,27 @@ async fn rocket() -> _ {
         .init();
 
     let cfg = AppConfig::default();
+    if cfg.market_use_mock {
+        tracing::warn!("MARKET_USE_MOCK=true：MSI/MTT 将使用本地 Mock 行情");
+    }
 
     // 初始化 PostgreSQL 并自动执行 migrations
     let db = db::init_db(&cfg.database_url)
         .await
         .expect("数据库初始化失败");
 
-    match market::data_source::probe_market_tables(&db).await {
-        Ok((n, last)) => tracing::info!(
-            "行情源就绪: active_stocks={} last_kline_date={:?}",
-            n,
-            last
-        ),
-        Err(e) => tracing::warn!(
-            "行情表探测失败（MSI/MTT 将无法使用真实行情）: {}",
-            e
-        ),
+    if !cfg.market_use_mock {
+        match market::data_source::probe_market_tables(&db).await {
+            Ok((n, last)) => tracing::info!(
+                "行情源就绪: active_stocks={} last_kline_date={:?}",
+                n,
+                last
+            ),
+            Err(e) => tracing::warn!(
+                "行情表探测失败（MSI/MTT 将无法使用真实行情）: {}",
+                e
+            ),
+        }
     }
 
     // WebSocket Hub
@@ -76,6 +81,7 @@ async fn rocket() -> _ {
             ..rocket::Config::default()
         })
         .manage(db)
+        .manage(cfg)
         .manage(hub)
         .attach(cors)
         .mount(

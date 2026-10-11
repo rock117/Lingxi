@@ -51,6 +51,13 @@ DATABASE_URL = os.getenv(
 ).strip()
 # 远端 systemd 可用独立连接串；未设置则用 DATABASE_URL
 DEPLOY_DATABASE_URL = os.getenv("deploy_database_url", DATABASE_URL).strip()
+# 服务端行情 Mock（写入 systemd；默认 false，勿通过 API 传参）
+MARKET_USE_MOCK = os.getenv("MARKET_USE_MOCK", "false").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 
 def parse_gitignore(repo_dir: Path) -> list[str]:
@@ -191,10 +198,11 @@ def run_ssh(ssh: paramiko.SSHClient, cmd: str, check: bool = True) -> tuple[int,
     return code, out, err
 
 
-def systemd_unit(app_dir: str, port: int, database_url: str) -> str:
+def systemd_unit(app_dir: str, port: int, database_url: str, market_use_mock: bool) -> str:
     """app_dir 下直接放可执行文件 lingxi-backend（非 target/release）。"""
     bin_path = f"{app_dir}/{BINARY_NAME}"
     db_esc = database_url.replace("%", "%%")
+    mock_flag = "true" if market_use_mock else "false"
     return f"""[Unit]
 Description=Lingxi Backend
 After=network.target
@@ -205,6 +213,7 @@ WorkingDirectory={app_dir}
 Environment=HOST=0.0.0.0
 Environment=PORT={port}
 Environment=DATABASE_URL={db_esc}
+Environment=MARKET_USE_MOCK={mock_flag}
 Environment=RUST_LOG=info
 ExecStart={bin_path}
 Restart=on-failure
@@ -223,7 +232,7 @@ def ensure_systemd_and_restart(
     unit_path = f"/etc/systemd/system/{SERVICE_NAME}.service"
     local_tmp = PROJECT_ROOT / "script" / f".{SERVICE_NAME}.service.tmp"
     local_tmp.write_text(
-        systemd_unit(app_dir, LISTEN_PORT, DEPLOY_DATABASE_URL),
+        systemd_unit(app_dir, LISTEN_PORT, DEPLOY_DATABASE_URL, MARKET_USE_MOCK),
         encoding="utf-8",
     )
     try:

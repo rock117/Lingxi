@@ -90,7 +90,7 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                "当前为 Mock 模式：设置仅保存在本地，「测试连接」不会请求真实 API。",
+                "服务器地址用于 HTTP API 与 WebSocket；「测试连接」请求 /api/health。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -154,7 +154,7 @@ fun SettingsScreen(
                 enabled = !testing,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(if (testing) "测试中…" else "测试连接（Mock）")
+                Text(if (testing) "测试中…" else "测试连接")
             }
 
             message?.let {

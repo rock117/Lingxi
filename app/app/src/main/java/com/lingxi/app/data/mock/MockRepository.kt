@@ -19,10 +19,9 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.random.Random
 
 /**
- * 本地内存 Mock，当前 UI / ViewModel 全部走这里。
+ * 条件 / 通知的本地内存实现（情绪指标已走后端 API）。
  *
- * TODO: 后续用 [com.lingxi.app.data.api.LingxiApi] + [com.lingxi.app.data.ws.WsClient]
- *  实现真实 Repository，再替换各 ViewModel 中对本对象的依赖。
+ * TODO: 用 [com.lingxi.app.data.api.LingxiApi] + [com.lingxi.app.data.ws.WsClient] 替换。
  */
 object MockRepository {
     private val conditionIdSeq = AtomicLong(3)
@@ -109,7 +108,7 @@ object MockRepository {
 
     private var pushJob: Job? = null
 
-    /** 启动定时随机推送（Mock 模式），每隔 5~15 秒随机发一条 */
+    /** 启动定时随机推送（本地演示用），每隔 5~15 秒随机发一条 */
     fun startAutoPush(scope: CoroutineScope) {
         if (pushJob?.isActive == true) return
         pushJob = scope.launch {
@@ -234,8 +233,4 @@ object MockRepository {
         _newNotification.tryEmit(item)
     }
 
-    suspend fun mockTestConnection(): Result<String> {
-        delay(600)
-        return Result.success("Mock 连接成功（未请求真实 API）")
-    }
 }

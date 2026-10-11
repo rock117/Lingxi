@@ -391,12 +391,11 @@ function mtt_status(score):
 ## 10. API
 
 ```
-GET /api/market/mid-term-trend?use_mock=false
+GET /api/market/mid-term-trend
 ```
 
-| 参数 | 含义 |
-|---|---|
-| `use_mock` | 默认 `false`：读最近约 70 个交易日的 `sc_stock` + `sc_stock_kline_d1_bfq`；`true` 用本地 Mock |
+默认读最近约 70 个交易日的 `sc_stock` + `sc_stock_kline_d1_bfq`。  
+本地假行情：服务端 **`MARKET_USE_MOCK=true`**（无查询参数）。
 
 响应示例：
 
