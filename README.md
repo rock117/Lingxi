@@ -45,9 +45,8 @@ Lingxi/
                                                      └──────────────────┘
 ```
 
-- **后台 API**：抓取/接收数据（当前为 Mock 假数据），根据用户配置的条件进行匹配，
-  满足时通过 WebSocket 推送给已连接的客户端，并持久化到 PostgreSQL。
-- **App**：新建/管理条件（交易指令 或 新闻事件），保存到后台；接收并展示推送的通知。
+- **后台 API**：市场情绪 / 中期趋势默认读 PostgreSQL 中 SecuritiesCollector 写入的 `sc_stock`、`sc_stock_kline_d1_bfq`；条件匹配结果经 WebSocket 推送并持久化。
+- **App**：情绪页请求真实 MSI/MTT；条件/通知 UI 仍可为本地 Mock（见代码）。
 
 ## 技术栈
 
@@ -62,7 +61,7 @@ Lingxi/
 - ViewModel + StateFlow — 状态管理
 - DataStore Preferences — 服务器配置本地持久化
 - Navigation Compose — 页面导航
-- Retrofit / OkHttp / WebSocket — 接口已定义，**当前 UI 使用 Mock 数据**（见代码中 TODO）
+- Retrofit / OkHttp / WebSocket — 情绪页走真实 MSI/MTT；条件/通知仍可 Mock
 
 ## 快速开始
 

@@ -27,12 +27,12 @@ interface LingxiApi {
     @GET("api/market/sentiment")
     suspend fun sentiment(
         @Query("days") days: Int = 5,
-        @Query("use_mock") useMock: Boolean = true,
+        @Query("use_mock") useMock: Boolean = false,
     ): MsiResult
 
     @GET("api/market/mid-term-trend")
     suspend fun midTermTrend(
-        @Query("use_mock") useMock: Boolean = true,
+        @Query("use_mock") useMock: Boolean = false,
     ): MttResult
 
     @GET("api/conditions")

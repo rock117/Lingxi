@@ -32,6 +32,18 @@ async fn rocket() -> _ {
         .await
         .expect("数据库初始化失败");
 
+    match market::data_source::probe_market_tables(&db).await {
+        Ok((n, last)) => tracing::info!(
+            "行情源就绪: active_stocks={} last_kline_date={:?}",
+            n,
+            last
+        ),
+        Err(e) => tracing::warn!(
+            "行情表探测失败（MSI/MTT 将无法使用真实行情）: {}",
+            e
+        ),
+    }
+
     // WebSocket Hub
     let hub = Hub::new(256);
 

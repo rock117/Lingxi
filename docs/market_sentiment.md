@@ -808,13 +808,15 @@ price_low  = (range_position_raw <  PRICE_LOW)
 ## 10. API
 
 ```
-GET /api/market/sentiment?days=5&use_mock=true
+GET /api/market/sentiment?days=5&use_mock=false
 ```
 
 | 参数 | 含义 |
 |---|---|
 | `days` | 窗口交易日数，默认 `5`，`clamp` 到 `[3, 30]` |
-| `use_mock` | 默认 `true` 用 Mock；`false` 接真实行情（实现 TODO） |
+| `use_mock` | 默认 `false`：读 `sc_stock` + `sc_stock_kline_d1_bfq`（与 SecuritiesCollector 共用库）；`true` 用本地 Mock |
+
+真实行情：`change_pct = (close - pre_close) / pre_close * 100`；仅 `sc_stock.is_active = TRUE`；无数据时返回 `400`。
 
 ### 10.1 响应字段
 
@@ -912,6 +914,7 @@ limit_down_count = count(change_pct <= -LIMIT_PCT)
 |---|---|
 | 常量、全部计算公式 | `backend/src/market/calculator.rs` |
 | 结构体 / 枚举 / 状态分档 | `backend/src/market/domain.rs` |
+| 真实 OHLC（`sc_*` 表） | `backend/src/market/data_source.rs` |
 | Mock OHLC 输入 | `backend/src/market/mock_data.rs` |
 | HTTP `days` clamp、路由 | `backend/src/market/routes.rs` |
 

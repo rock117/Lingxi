@@ -388,13 +388,15 @@ function mtt_status(score):
 
 ---
 
-## 10. API 草案
-
-实现落地时建议独立端点（路径可调整，但字段语义须一致）：
+## 10. API
 
 ```
-GET /api/market/mid-term-trend
+GET /api/market/mid-term-trend?use_mock=false
 ```
+
+| 参数 | 含义 |
+|---|---|
+| `use_mock` | 默认 `false`：读最近约 70 个交易日的 `sc_stock` + `sc_stock_kline_d1_bfq`；`true` 用本地 Mock |
 
 响应示例：
 
@@ -438,6 +440,7 @@ GET /api/market/mid-term-trend
 | 常量、均线、`trend_i`、聚合、单测 | `backend/src/market/mid_term.rs` |
 | 响应结构体 / `MttStatus` | `backend/src/market/domain.rs` |
 | HTTP `GET /api/market/mid-term-trend` | `backend/src/market/routes.rs` |
+| 真实 OHLC（`sc_*` 表） | `backend/src/market/data_source.rs` |
 | Mock 输入 | `backend/src/market/mock_data.rs` |
 
 本文档仍为 SoT；禁止只改代码不改本文档。
