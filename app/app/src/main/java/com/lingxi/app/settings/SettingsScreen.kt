@@ -60,6 +60,7 @@ fun SettingsScreen(
     var wsPort by remember { mutableStateOf(saved.wsPort.toString()) }
     var useTls by remember { mutableStateOf(saved.useTls) }
     var wsPath by remember { mutableStateOf(saved.wsPath) }
+    var refreshMinutes by remember { mutableStateOf(saved.refreshIntervalMinutes.toString()) }
 
     LaunchedEffect(saved) {
         host = saved.host
@@ -67,6 +68,7 @@ fun SettingsScreen(
         wsPort = saved.wsPort.toString()
         useTls = saved.useTls
         wsPath = saved.wsPath
+        refreshMinutes = saved.refreshIntervalMinutes.toString()
     }
 
     Scaffold(
@@ -132,6 +134,21 @@ fun SettingsScreen(
                 Switch(checked = useTls, onCheckedChange = { useTls = it })
             }
 
+            HorizontalDivider()
+            Text(
+                "情绪数据刷新",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            OutlinedTextField(
+                value = refreshMinutes,
+                onValueChange = { refreshMinutes = it.filter { c -> c.isDigit() }.take(2) },
+                label = { Text("自动刷新间隔（分钟）") },
+                supportingText = { Text("默认 5 分钟，范围 1–60；情绪页也可手动刷新") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+
             Spacer(modifier = Modifier.height(8.dp))
             Button(
                 onClick = {
@@ -142,6 +159,8 @@ fun SettingsScreen(
                             wsPort = wsPort.toIntOrNull() ?: 8000,
                             useTls = useTls,
                             wsPath = wsPath,
+                            refreshIntervalMinutes = (refreshMinutes.toIntOrNull() ?: 5)
+                                .coerceIn(1, 60),
                         ),
                     )
                 },

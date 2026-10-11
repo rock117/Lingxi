@@ -73,11 +73,21 @@ fun SentimentScreen(viewModel: MarketViewModel) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                "短线情绪 · 中期结构",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "短线情绪 · 中期结构",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    buildString {
+                        append("每 ${ui.refreshIntervalMinutes} 分钟自动刷新")
+                        ui.lastSuccessAt?.let { append(" · 成功 $it") }
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             IconButton(onClick = { viewModel.refresh() }, enabled = !ui.loading) {
                 Icon(Icons.Default.Refresh, contentDescription = "刷新")
             }
@@ -122,7 +132,7 @@ fun SentimentScreen(viewModel: MarketViewModel) {
             }
             if (ui.error != null) {
                 Text(
-                    "部分刷新失败：${ui.error}",
+                    "刷新失败：${ui.error}",
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(bottom = 8.dp),

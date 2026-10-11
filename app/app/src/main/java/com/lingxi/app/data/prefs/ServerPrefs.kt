@@ -22,6 +22,7 @@ class ServerPrefs(private val context: Context) {
         val WS_PORT = intPreferencesKey("ws_port")
         val USE_TLS = booleanPreferencesKey("use_tls")
         val WS_PATH = stringPreferencesKey("ws_path")
+        val REFRESH_INTERVAL_MINUTES = intPreferencesKey("refresh_interval_minutes")
     }
 
     val configFlow: Flow<ServerConfig> = context.dataStore.data.map { prefs ->
@@ -31,6 +32,7 @@ class ServerPrefs(private val context: Context) {
             wsPort = prefs[Keys.WS_PORT] ?: BuildConfig.DEFAULT_WS_PORT,
             useTls = prefs[Keys.USE_TLS] ?: BuildConfig.DEFAULT_USE_TLS,
             wsPath = prefs[Keys.WS_PATH] ?: BuildConfig.DEFAULT_WS_PATH,
+            refreshIntervalMinutes = (prefs[Keys.REFRESH_INTERVAL_MINUTES] ?: 5).coerceIn(1, 60),
         )
     }
 
@@ -41,6 +43,7 @@ class ServerPrefs(private val context: Context) {
             prefs[Keys.WS_PORT] = config.wsPort
             prefs[Keys.USE_TLS] = config.useTls
             prefs[Keys.WS_PATH] = config.wsPath.ifBlank { "/ws" }
+            prefs[Keys.REFRESH_INTERVAL_MINUTES] = config.refreshIntervalMinutes.coerceIn(1, 60)
         }
     }
 }

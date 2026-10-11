@@ -3,6 +3,8 @@
 //! 表定义见 `SecuritiesCollector/backend/migrations`：
 //! - `sc_stock`
 //! - `sc_stock_kline_d1_bfq`
+//!
+//! 仅 MSI：盘中（上海时区周一至周五 09:30–18:00）最新交易日改用 Miana 实时行情覆盖。
 
 use std::collections::BTreeMap;
 
@@ -10,6 +12,10 @@ use chrono::NaiveDate;
 use sea_orm::{DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
 
 use super::domain::{MarketDailySnapshot, MarketDataInput, StockDailyData};
+use super::miana::MianaClient;
+use super::realtime_cache::RealtimeDayCache;
+use super::session;
+use crate::error::{AppError, AppResult};
 
 #[derive(Debug, FromQueryResult)]
 struct KlineRow {
@@ -73,6 +79,102 @@ ORDER BY k.trade_date ASC, k.symbol ASC
     .await?;
 
     Ok(rows_to_input(rows))
+}
+
+/// 加载窗口；若处于盘中实时窗口，用 Miana 覆盖/补齐最新交易日。
+pub async fn load_market_window_hybrid(
+    db: &DatabaseConnection,
+    days: usize,
+    miana: &MianaClient,
+    cache: &RealtimeDayCache,
+) -> AppResult<MarketDataInput> {
+    let mut input = load_market_window(db, days)
+        .await
+        .map_err(AppError::from)?;
+
+    if !session::is_realtime_session_now() {
+        return Ok(input);
+    }
+
+    let today = session::shanghai_today();
+    let symbols = load_active_symbols(db).await.map_err(AppError::from)?;
+    if symbols.is_empty() {
+        return Err(AppError::BadRequest(
+            "无活跃股票：请确认 sc_stock.is_active 已由 SecuritiesCollector 写入".into(),
+        ));
+    }
+
+    tracing::info!(
+        date = %today,
+        symbols = symbols.len(),
+        "盘中窗口：最新交易日改用 Miana 实时行情"
+    );
+
+    let stocks = cache.get_or_fetch(miana, &symbols, &today).await?;
+    apply_realtime_latest_day(&mut input, stocks, &today, days);
+    Ok(input)
+}
+
+/// 活跃股票完整代码（`代码.市场后缀`）。
+pub async fn load_active_symbols(db: &DatabaseConnection) -> Result<Vec<String>, DbErr> {
+    #[derive(Debug, FromQueryResult)]
+    struct Sym {
+        symbol: String,
+    }
+
+    let rows = Sym::find_by_statement(Statement::from_string(
+        DbBackend::Postgres,
+        r#"
+SELECT symbol
+FROM sc_stock
+WHERE is_active = TRUE
+ORDER BY symbol ASC
+"#
+        .to_string(),
+    ))
+    .all(db)
+    .await?;
+
+    Ok(rows.into_iter().map(|r| r.symbol).collect())
+}
+
+/// 用实时快照替换或追加最新日，并裁剪到 `days` 天。
+fn apply_realtime_latest_day(
+    input: &mut MarketDataInput,
+    stocks: Vec<StockDailyData>,
+    today: &str,
+    days: usize,
+) {
+    let snap = MarketDailySnapshot {
+        date: today.to_string(),
+        stocks,
+    };
+
+    match input.snapshots.last().map(|s| s.date.as_str()) {
+        Some(last) if last == today => {
+            if let Some(slot) = input.snapshots.last_mut() {
+                *slot = snap;
+            }
+        }
+        Some(last) if last < today => {
+            input.snapshots.push(snap);
+        }
+        Some(_) => {
+            // 库内日期超前：仍强制用今日实时覆盖末日（极端时钟/脏数据）
+            if let Some(slot) = input.snapshots.last_mut() {
+                *slot = snap;
+            }
+        }
+        None => {
+            input.snapshots.push(snap);
+        }
+    }
+
+    let days = days.max(1);
+    if input.snapshots.len() > days {
+        let skip = input.snapshots.len() - days;
+        input.snapshots = input.snapshots.split_off(skip);
+    }
 }
 
 fn rows_to_input(rows: Vec<KlineRow>) -> MarketDataInput {
@@ -182,5 +284,52 @@ mod tests {
         assert_eq!(input.snapshots[1].stocks.len(), 1);
         assert!((input.snapshots[0].stocks[0].change_pct - 5.0).abs() < 1e-9
             || (input.snapshots[0].stocks[1].change_pct - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_apply_realtime_replaces_same_day() {
+        let mut input = MarketDataInput {
+            snapshots: vec![MarketDailySnapshot {
+                date: "2026-10-09".into(),
+                stocks: vec![],
+            }],
+        };
+        apply_realtime_latest_day(
+            &mut input,
+            vec![StockDailyData {
+                symbol: "600000.SH".into(),
+                date: "2026-10-09".into(),
+                open: 1.0,
+                high: 1.0,
+                low: 1.0,
+                close_price: 1.0,
+                amount: 1.0,
+                change_pct: 0.0,
+            }],
+            "2026-10-09",
+            5,
+        );
+        assert_eq!(input.snapshots.len(), 1);
+        assert_eq!(input.snapshots[0].stocks.len(), 1);
+    }
+
+    #[test]
+    fn test_apply_realtime_appends_and_trims() {
+        let mut input = MarketDataInput {
+            snapshots: vec![
+                MarketDailySnapshot {
+                    date: "2026-10-08".into(),
+                    stocks: vec![],
+                },
+                MarketDailySnapshot {
+                    date: "2026-10-09".into(),
+                    stocks: vec![],
+                },
+            ],
+        };
+        apply_realtime_latest_day(&mut input, vec![], "2026-10-10", 2);
+        assert_eq!(input.snapshots.len(), 2);
+        assert_eq!(input.snapshots[0].date, "2026-10-09");
+        assert_eq!(input.snapshots[1].date, "2026-10-10");
     }
 }

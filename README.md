@@ -45,8 +45,8 @@ Lingxi/
                                                      └──────────────────┘
 ```
 
-- **后台 API**：市场情绪 / 中期趋势默认读 PostgreSQL 中 SecuritiesCollector 写入的 `sc_stock`、`sc_stock_kline_d1_bfq`；条件匹配结果经 WebSocket 推送并持久化。
-- **App**：情绪页请求 MSI/MTT（是否假行情由服务端 `MARKET_USE_MOCK` 决定）；条件/通知列表暂仍用本地内存数据。
+- **后台 API**：市场情绪 / 中期趋势默认读 PostgreSQL 中 SecuritiesCollector 写入的 `sc_stock`、`sc_stock_kline_d1_bfq`；仅情绪 MSI 在盘中（上海周一至周五 09:30–18:00）对最新交易日改调 Miana 实时行情；条件匹配结果经 WebSocket 推送并持久化。
+- **App**：情绪页请求 MSI/MTT（可设刷新间隔，默认 5 分钟；是否假行情由服务端 `MARKET_USE_MOCK` 决定）；条件/通知列表暂仍用本地内存数据。
 
 ## 技术栈
 
@@ -125,7 +125,8 @@ powershell -ExecutionPolicy Bypass -File .\install-debug.ps1 -Logcat
 
 情绪页与「测试连接」走真实后端；条件/通知列表暂仍在 App 内存中（待接 API）。  
 行情是否使用假数据由服务端环境变量 `MARKET_USE_MOCK` 控制（默认 `false`），客户端无 mock 开关。  
-设置页默认服务器地址在**构建时**从仓库根目录 `.env` 注入（`app_server_host`，缺省则用 `ssh_server`）；用户改过设置后以 DataStore 为准。
+盘中实时行情需配置 `MIANA_TOKEN`（及可选 `MIANA_BASE_URL` / `MIANA_RATE_LIMIT_PER_MIN`），部署脚本会写入 systemd。  
+设置页默认服务器地址在**构建时**从仓库根目录 `.env` 注入（`app_server_host`，缺省则用 `ssh_server`）；用户改过设置后以 DataStore 为准；情绪刷新间隔默认可在设置页修改。
 
 ### 部署后端到远端
 

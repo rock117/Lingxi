@@ -58,6 +58,10 @@ MARKET_USE_MOCK = os.getenv("MARKET_USE_MOCK", "false").strip().lower() in (
     "yes",
     "on",
 )
+MIANA_BASE_URL = os.getenv("MIANA_BASE_URL", "https://miana.com.cn").strip()
+MIANA_TOKEN = os.getenv("MIANA_TOKEN", "").strip()
+MIANA_RATE_LIMIT_PER_MIN = os.getenv("MIANA_RATE_LIMIT_PER_MIN", "480").strip()
+MIANA_REALTIME_CACHE_SECS = os.getenv("MIANA_REALTIME_CACHE_SECS", "120").strip()
 
 
 def parse_gitignore(repo_dir: Path) -> list[str]:
@@ -198,11 +202,22 @@ def run_ssh(ssh: paramiko.SSHClient, cmd: str, check: bool = True) -> tuple[int,
     return code, out, err
 
 
-def systemd_unit(app_dir: str, port: int, database_url: str, market_use_mock: bool) -> str:
+def systemd_unit(
+    app_dir: str,
+    port: int,
+    database_url: str,
+    market_use_mock: bool,
+    miana_base_url: str,
+    miana_token: str,
+    miana_rate_limit_per_min: str,
+    miana_realtime_cache_secs: str,
+) -> str:
     """app_dir 下直接放可执行文件 lingxi-backend（非 target/release）。"""
     bin_path = f"{app_dir}/{BINARY_NAME}"
     db_esc = database_url.replace("%", "%%")
     mock_flag = "true" if market_use_mock else "false"
+    miana_esc = miana_token.replace("%", "%%")
+    base_esc = miana_base_url.replace("%", "%%")
     return f"""[Unit]
 Description=Lingxi Backend
 After=network.target
@@ -214,6 +229,10 @@ Environment=HOST=0.0.0.0
 Environment=PORT={port}
 Environment=DATABASE_URL={db_esc}
 Environment=MARKET_USE_MOCK={mock_flag}
+Environment=MIANA_BASE_URL={base_esc}
+Environment=MIANA_TOKEN={miana_esc}
+Environment=MIANA_RATE_LIMIT_PER_MIN={miana_rate_limit_per_min}
+Environment=MIANA_REALTIME_CACHE_SECS={miana_realtime_cache_secs}
 Environment=RUST_LOG=info
 ExecStart={bin_path}
 Restart=on-failure
@@ -232,7 +251,16 @@ def ensure_systemd_and_restart(
     unit_path = f"/etc/systemd/system/{SERVICE_NAME}.service"
     local_tmp = PROJECT_ROOT / "script" / f".{SERVICE_NAME}.service.tmp"
     local_tmp.write_text(
-        systemd_unit(app_dir, LISTEN_PORT, DEPLOY_DATABASE_URL, MARKET_USE_MOCK),
+        systemd_unit(
+            app_dir,
+            LISTEN_PORT,
+            DEPLOY_DATABASE_URL,
+            MARKET_USE_MOCK,
+            MIANA_BASE_URL,
+            MIANA_TOKEN,
+            MIANA_RATE_LIMIT_PER_MIN,
+            MIANA_REALTIME_CACHE_SECS,
+        ),
         encoding="utf-8",
     )
     try:

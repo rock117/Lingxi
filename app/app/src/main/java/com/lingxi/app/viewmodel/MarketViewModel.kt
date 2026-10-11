@@ -8,14 +8,22 @@ import com.lingxi.app.data.model.MsiResult
 import com.lingxi.app.data.model.MttResult
 import com.lingxi.app.data.model.ServerConfig
 import com.lingxi.app.data.prefs.ServerPrefs
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 data class MarketUiState(
     val loading: Boolean = false,
@@ -23,6 +31,9 @@ data class MarketUiState(
     val mtt: MttResult? = null,
     val error: String? = null,
     val serverHint: String = "",
+    /** 最近一次 MSI/MTT 均成功拉取的本地时间文案；从未成功则为 null。 */
+    val lastSuccessAt: String? = null,
+    val refreshIntervalMinutes: Int = 5,
 )
 
 class MarketViewModel(application: Application) : AndroidViewModel(application) {
@@ -34,7 +45,19 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
     private val _ui = MutableStateFlow(MarketUiState())
     val ui: StateFlow<MarketUiState> = _ui.asStateFlow()
 
+    private var autoRefreshJob: Job? = null
+    private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+
     init {
+        viewModelScope.launch {
+            prefs.configFlow
+                .map { it.refreshIntervalMinutes.coerceIn(1, 60) }
+                .distinctUntilChanged()
+                .collect { minutes ->
+                    _ui.value = _ui.value.copy(refreshIntervalMinutes = minutes)
+                    restartAutoRefresh(minutes)
+                }
+        }
         refresh()
     }
 
@@ -45,6 +68,7 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
                 loading = true,
                 error = null,
                 serverHint = cfg.httpBaseUrl(),
+                refreshIntervalMinutes = cfg.refreshIntervalMinutes.coerceIn(1, 60),
             )
             try {
                 val api = ApiClient.create(cfg)
@@ -66,12 +90,17 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
 
+                val bothOk = msiResult.isSuccess && mttResult.isSuccess
+                val successAt = if (bothOk) timeFmt.format(Date()) else _ui.value.lastSuccessAt
+
                 _ui.value = MarketUiState(
                     loading = false,
                     result = msiResult.getOrElse { _ui.value.result },
                     mtt = mttResult.getOrElse { _ui.value.mtt },
                     error = errors.takeIf { it.isNotEmpty() }?.joinToString("；"),
                     serverHint = cfg.httpBaseUrl(),
+                    lastSuccessAt = successAt,
+                    refreshIntervalMinutes = cfg.refreshIntervalMinutes.coerceIn(1, 60),
                 )
             } catch (e: Exception) {
                 _ui.value = MarketUiState(
@@ -80,7 +109,22 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
                     mtt = _ui.value.mtt,
                     error = e.message ?: e.javaClass.simpleName,
                     serverHint = cfg.httpBaseUrl(),
+                    lastSuccessAt = _ui.value.lastSuccessAt,
+                    refreshIntervalMinutes = cfg.refreshIntervalMinutes.coerceIn(1, 60),
                 )
+            }
+        }
+    }
+
+    private fun restartAutoRefresh(minutes: Int) {
+        autoRefreshJob?.cancel()
+        autoRefreshJob = viewModelScope.launch {
+            val periodMs = minutes.coerceIn(1, 60) * 60_000L
+            while (isActive) {
+                delay(periodMs)
+                if (!_ui.value.loading) {
+                    refresh()
+                }
             }
         }
     }

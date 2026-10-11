@@ -61,6 +61,8 @@ data class ServerConfig(
     val wsPort: Int = com.lingxi.app.BuildConfig.DEFAULT_WS_PORT,
     val useTls: Boolean = com.lingxi.app.BuildConfig.DEFAULT_USE_TLS,
     val wsPath: String = com.lingxi.app.BuildConfig.DEFAULT_WS_PATH,
+    /** 情绪页自动向服务端拉取间隔（分钟），默认 5。 */
+    val refreshIntervalMinutes: Int = 5,
 ) {
     fun httpBaseUrl(): String {
         val scheme = if (useTls) "https" else "http"

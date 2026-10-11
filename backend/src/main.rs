@@ -29,6 +29,13 @@ async fn rocket() -> _ {
     if cfg.market_use_mock {
         tracing::warn!("MARKET_USE_MOCK=true：MSI/MTT 将使用本地 Mock 行情");
     }
+    if !cfg.market_use_mock && cfg.miana_token.trim().is_empty() {
+        tracing::warn!("MIANA_TOKEN 未配置：盘中实时行情窗口将无法覆盖最新交易日");
+    }
+
+    let miana = market::miana::MianaClient::new(&cfg).expect("初始化 Miana 客户端失败");
+    let realtime_cache =
+        market::realtime_cache::RealtimeDayCache::new(cfg.miana_realtime_cache_secs);
 
     // 初始化 PostgreSQL 并自动执行 migrations
     let db = db::init_db(&cfg.database_url)
@@ -38,9 +45,10 @@ async fn rocket() -> _ {
     if !cfg.market_use_mock {
         match market::data_source::probe_market_tables(&db).await {
             Ok((n, last)) => tracing::info!(
-                "行情源就绪: active_stocks={} last_kline_date={:?}",
+                "行情源就绪: active_stocks={} last_kline_date={:?} realtime_session={}",
                 n,
-                last
+                last,
+                market::session::is_realtime_session_now(),
             ),
             Err(e) => tracing::warn!(
                 "行情表探测失败（MSI/MTT 将无法使用真实行情）: {}",
@@ -82,6 +90,8 @@ async fn rocket() -> _ {
         })
         .manage(db)
         .manage(cfg)
+        .manage(miana)
+        .manage(realtime_cache)
         .manage(hub)
         .attach(cors)
         .mount(
