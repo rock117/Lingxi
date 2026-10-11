@@ -1,4 +1,5 @@
 use std::env;
+use std::path::PathBuf;
 
 fn env_bool(key: &str, default: bool) -> bool {
     match env::var(key) {
@@ -25,6 +26,10 @@ pub struct AppConfig {
     pub miana_rate_limit_per_min: u32,
     /// 盘中最新日实时快照内存缓存秒数。
     pub miana_realtime_cache_secs: u64,
+    /// 文件日志目录（默认 `log`；远端部署为 `/home/rock/apps/lingxi/log`）。
+    pub log_dir: PathBuf,
+    /// 单个日志文件最大字节数（默认 10MiB）。
+    pub log_max_bytes: u64,
 }
 
 impl Default for AppConfig {
@@ -50,6 +55,13 @@ impl Default for AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(120),
+            log_dir: env::var("LOG_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("log")),
+            log_max_bytes: env::var("LOG_MAX_BYTES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(10 * 1024 * 1024),
         }
     }
 }

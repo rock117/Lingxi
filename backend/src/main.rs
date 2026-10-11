@@ -2,6 +2,7 @@ mod config;
 mod db;
 mod engine;
 mod error;
+mod logging;
 mod market;
 mod routes;
 mod ws;
@@ -11,21 +12,64 @@ use std::collections::HashSet;
 use rocket::http::Method;
 use rocket::routes;
 use rocket_cors::{AllowedHeaders, AllowedOrigins, CorsOptions};
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{fmt, EnvFilter};
 
 use config::AppConfig;
 use ws::hub::Hub;
 
+fn init_logging(cfg: &AppConfig) {
+    // sqlx 默认会打每条 SQL 的 INFO，压到 WARN 以免刷屏
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
+        .add_directive("lingxi_backend=info".parse().expect("log directive"))
+        .add_directive("sqlx=warn".parse().expect("log directive"))
+        .add_directive("sqlx::query=warn".parse().expect("log directive"));
+
+    let timer = logging::ShanghaiTimer;
+    let stdout_layer = fmt::layer()
+        .with_timer(timer.clone())
+        .with_writer(std::io::stdout)
+        .with_ansi(true);
+
+    match logging::DateSizeFileWriter::open(&cfg.log_dir, "lingxi", cfg.log_max_bytes) {
+        Ok(file_writer) => {
+            let file_hint = file_writer.current_path_hint();
+            let file_layer = fmt::layer()
+                .with_timer(timer)
+                .with_writer(file_writer)
+                .with_ansi(false);
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(stdout_layer)
+                .with(file_layer)
+                .init();
+            tracing::info!(
+                log_dir = %cfg.log_dir.display(),
+                log_file = %file_hint,
+                log_max_bytes = cfg.log_max_bytes,
+                "文件日志已启用（当前 lingxi.log，归档带日期，东八区时间戳，单文件上限）"
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "无法打开文件日志 dir={}: {}；仅输出到 stdout",
+                cfg.log_dir.display(),
+                e
+            );
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(stdout_layer)
+                .init();
+        }
+    }
+}
+
 #[rocket::launch]
 async fn rocket() -> _ {
-    // 初始化日志
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::from_default_env().add_directive("lingxi_backend=info".parse().unwrap()),
-        )
-        .init();
-
     let cfg = AppConfig::default();
+    init_logging(&cfg);
+
     if cfg.market_use_mock {
         tracing::warn!("MARKET_USE_MOCK=true：MSI/MTT 将使用本地 Mock 行情");
     }

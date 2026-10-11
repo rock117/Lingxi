@@ -30,7 +30,12 @@ import paramiko
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(PROJECT_ROOT / ".env")
+_env_path = PROJECT_ROOT / ".env"
+try:
+    load_dotenv(_env_path, encoding="utf-8")
+except UnicodeDecodeError:
+    # Windows 下用系统默认编码追加注释时可能写成 GBK
+    load_dotenv(_env_path, encoding="gbk")
 
 SSH_HOST = os.getenv("ssh_server", "").strip()
 SSH_PORT = int(os.getenv("ssh_port", "22"))
@@ -214,6 +219,7 @@ def systemd_unit(
 ) -> str:
     """app_dir 下直接放可执行文件 lingxi-backend（非 target/release）。"""
     bin_path = f"{app_dir}/{BINARY_NAME}"
+    log_dir = f"{app_dir.rstrip('/')}/log"
     db_esc = database_url.replace("%", "%%")
     mock_flag = "true" if market_use_mock else "false"
     miana_esc = miana_token.replace("%", "%%")
@@ -233,7 +239,9 @@ Environment=MIANA_BASE_URL={base_esc}
 Environment=MIANA_TOKEN={miana_esc}
 Environment=MIANA_RATE_LIMIT_PER_MIN={miana_rate_limit_per_min}
 Environment=MIANA_REALTIME_CACHE_SECS={miana_realtime_cache_secs}
-Environment=RUST_LOG=info
+Environment=LOG_DIR={log_dir}
+Environment=LOG_MAX_BYTES=10485760
+Environment=RUST_LOG=info,sqlx=warn,sqlx::query=warn
 ExecStart={bin_path}
 Restart=on-failure
 RestartSec=3
@@ -266,6 +274,7 @@ def ensure_systemd_and_restart(
     try:
         sftp.put(str(local_tmp), f"/tmp/{SERVICE_NAME}.service")
         run_ssh(ssh, f"sudo mv /tmp/{SERVICE_NAME}.service {unit_path}")
+        run_ssh(ssh, f"mkdir -p {app_dir.rstrip('/')}/log")
         run_ssh(ssh, "sudo systemctl daemon-reload")
         run_ssh(ssh, f"sudo systemctl enable {SERVICE_NAME}")
         run_ssh(ssh, f"sudo systemctl restart {SERVICE_NAME}")
@@ -283,7 +292,7 @@ def remote_build(ssh: paramiko.SSHClient, remote_dir: str, app_dir: str):
         check=True,
     )
     # 安装到运行目录，供 systemd ExecStart
-    run_ssh(ssh, f"mkdir -p {app_dir}")
+    run_ssh(ssh, f"mkdir -p {app_dir} {app_dir.rstrip('/')}/log")
     run_ssh(
         ssh,
         f"install -m 755 {remote_dir}/target/release/{BINARY_NAME} {app_dir}/{BINARY_NAME}",

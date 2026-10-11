@@ -201,10 +201,13 @@ sudo systemctl status lingxi-backend
 sudo systemctl enable lingxi-backend
 sudo systemctl disable lingxi-backend
 
-# 实时日志
-sudo journalctl -u lingxi-backend -f
+# 文件日志（当前无日期；东八区时间戳；单文件最大 10MB）
+# /home/rock/apps/lingxi/log/lingxi.log
+# 滚动归档：lingxi.YYYY-MM-DD.log / lingxi.YYYY-MM-DD.N.log
+tail -f /home/rock/apps/lingxi/log/lingxi.log
 
-# 最近日志
+# journald（stdout 仍可用）
+sudo journalctl -u lingxi-backend -f
 sudo journalctl -u lingxi-backend -n 100 --no-pager
 ```
 

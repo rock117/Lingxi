@@ -226,7 +226,7 @@ Environment=HOST=0.0.0.0
 Environment=PORT={LISTEN}
 Environment=DATABASE_URL={db_esc}
 Environment=MARKET_USE_MOCK=false
-Environment=RUST_LOG=info
+Environment=RUST_LOG=info,sqlx=warn,sqlx::query=warn
 ExecStart={APP_DIR}/lingxi-backend
 Restart=on-failure
 RestartSec=3
