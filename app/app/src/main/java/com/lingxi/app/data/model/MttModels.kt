@@ -48,6 +48,15 @@ fun scoreBandLabel(score: Double): String = when {
     else -> "中性"
 }
 
+/** 程度说明（展开层 / 因子行用，语义与灰区阈值一致）。 */
+fun scoreDegreeLabel(score: Double): String = when {
+    score > 65 -> "明显偏多"
+    score >= 60 -> "略偏多，未确认"
+    score < 35 -> "明显偏空"
+    score <= 40 -> "略偏空，未确认"
+    else -> "多空胶着"
+}
+
 fun isScoreGrey(score: Double): Boolean =
     (score in 60.0..65.0) || (score in 35.0..40.0)
 
