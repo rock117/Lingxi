@@ -153,9 +153,10 @@ mod tests {
         let data = generate_mock_data_with_bias(10, 0.8);
         let result = super::super::calculator::calculate_msi(&data);
         assert!(
-            result.value > 55.0,
-            "偏多市场 MSI 应 > 55, 实际: {}",
-            result.value
+            result.today.value > 50.0 && result.recent.value > 50.0,
+            "偏多市场今日/近N日 MSI 应 > 50, today={}, recent={}",
+            result.today.value,
+            result.recent.value
         );
     }
 
@@ -164,9 +165,10 @@ mod tests {
         let data = generate_mock_data_with_bias(10, -0.8);
         let result = super::super::calculator::calculate_msi(&data);
         assert!(
-            result.value < 45.0,
-            "偏空市场 MSI 应 < 45, 实际: {}",
-            result.value
+            result.today.value < 50.0 && result.recent.value < 50.0,
+            "偏空市场今日/近N日 MSI 应 < 50, today={}, recent={}",
+            result.today.value,
+            result.recent.value
         );
     }
 

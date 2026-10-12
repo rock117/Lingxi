@@ -45,8 +45,8 @@ Lingxi/
                                                      └──────────────────┘
 ```
 
-- **后台 API**：市场情绪 / 中期趋势默认读 PostgreSQL 中 SecuritiesCollector 写入的 `sc_stock`、`sc_stock_kline_d1_bfq`；仅情绪 MSI 在盘中（上海周一至周五 09:30–18:00）对最新交易日改调 Miana 实时行情；条件匹配结果经 WebSocket 推送并持久化。
-- **App**：情绪页请求 MSI/MTT（可设刷新间隔，默认 5 分钟；是否假行情由服务端 `MARKET_USE_MOCK` 决定）；条件/通知列表暂仍用本地内存数据。
+- **后台 API**：短线情绪为「今日（纯当日截面）+ 近 N 日日分加权」，请求时现算不落库；盘中今日用 Miana 实时，其余读 `sc_stock` / `sc_stock_kline_d1_bfq`；中期 MTT 仍读库长窗；条件匹配经 WebSocket 推送并持久化。
+- **App**：情绪页展示今日 / 近 N 日 / MTT（可设刷新间隔，默认 5 分钟）；条件/通知列表暂仍用本地内存数据。
 
 ## 技术栈
 

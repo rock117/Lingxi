@@ -61,36 +61,51 @@ fun isScoreGrey(score: Double): Boolean =
     (score in 60.0..65.0) || (score in 35.0..40.0)
 
 /**
- * MSI × MTT 组合结论（产品文案，非交易指令）。
- * bullish: ≥60；bearish: ≤40；其余中性。
+ * 今日 / 近N日 / MTT 组合结论（产品文案，非交易指令）。
+ * bullish: ≥60；bearish: ≤40；其余中性。短线以「今日」为主，近N日作背景。
  */
-fun comboOutlook(msi: Double?, mtt: Double?): String {
-    if (msi == null && mtt == null) return "暂无数据"
-    if (msi == null) return "中期结构参考，短线暂不可用"
-    if (mtt == null) return "短线情绪参考，中期暂不可用"
+fun comboOutlook(today: Double?, recent: Double?, mtt: Double?): String {
+    if (today == null && mtt == null) return "暂无数据"
+    if (today == null) return "中期结构参考，短线暂不可用"
+    if (mtt == null) {
+        return when {
+            recent == null -> "短线情绪参考，中期暂不可用"
+            today >= 60 && recent < 45 -> "今日偏热，近几日仍偏冷"
+            today <= 40 && recent > 55 -> "今日偏冷，近几日仍偏热"
+            else -> "短线情绪参考，中期暂不可用"
+        }
+    }
 
-    val mBull = msi >= 60
-    val mBear = msi <= 40
+    val mBull = today >= 60
+    val mBear = today <= 40
     val tBull = mtt >= 60
     val tBear = mtt <= 40
-    val soft = isScoreGrey(msi) || isScoreGrey(mtt)
+    val soft = isScoreGrey(today) || isScoreGrey(mtt)
 
-    return when {
-        mBull && tBull ->
-            if (soft) "倾向顺势升温：短线偏热，中期结构也偏多"
-            else "顺势升温：短线热，中期结构也偏多"
-        mBull && tBear ->
-            if (soft) "倾向逆势热闹：短线偏热，中期结构仍偏空"
-            else "逆势热闹：短线热，中期结构仍偏空"
-        mBear && tBull ->
-            if (soft) "倾向趋势回调：中期仍偏多，短线在降温"
-            else "趋势回调：中期仍偏多，短线在降温"
-        mBear && tBear ->
-            if (soft) "倾向顺势走弱：短线偏冷，中期结构也偏空"
-            else "顺势走弱：短线冷，中期结构也偏空"
-        tBull -> "中期偏多，短线多空胶着"
-        tBear -> "中期偏空，短线多空胶着"
-        mBull || mBear -> "短线有脉冲，中期尚无结构"
-        else -> "短线与中期均处中性"
+    val recentNote = when {
+        recent == null -> ""
+        recent >= 60 && today < 55 -> "；近几日偏热"
+        recent <= 40 && today > 45 -> "；近几日偏冷"
+        else -> ""
     }
+
+    val core = when {
+        mBull && tBull ->
+            if (soft) "倾向顺势升温：今日偏热，中期结构也偏多"
+            else "顺势升温：今日热，中期结构也偏多"
+        mBull && tBear ->
+            if (soft) "倾向逆势热闹：今日偏热，中期结构仍偏空"
+            else "逆势热闹：今日热，中期结构仍偏空"
+        mBear && tBull ->
+            if (soft) "倾向趋势回调：中期仍偏多，今日在降温"
+            else "趋势回调：中期仍偏多，今日在降温"
+        mBear && tBear ->
+            if (soft) "倾向顺势走弱：今日偏冷，中期结构也偏空"
+            else "顺势走弱：今日冷，中期结构也偏空"
+        tBull -> "中期偏多，今日多空胶着"
+        tBear -> "中期偏空，今日多空胶着"
+        mBull || mBear -> "今日有脉冲，中期尚无结构"
+        else -> "今日与中期均处中性"
+    }
+    return core + recentNote
 }

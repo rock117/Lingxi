@@ -100,12 +100,13 @@ pub async fn sentiment(
     let result = calculator::calculate_msi(&input);
 
     tracing::info!(
-        "市场情绪: MSI={:.1} dir={:.1} int={:.1} con={:.1} signal={} mock={}",
-        result.value,
-        result.layers.direction,
-        result.layers.intensity,
-        result.layers.constraint,
-        result.signal.label,
+        "市场情绪: today={:.1} recent={:.1} dir={:.1} int={:.1} con={:.1} signal={} mock={}",
+        result.today.value,
+        result.recent.value,
+        result.today.layers.direction,
+        result.today.layers.intensity,
+        result.today.layers.constraint,
+        result.today.signal.label,
         use_mock
     );
 

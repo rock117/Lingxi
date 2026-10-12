@@ -337,7 +337,7 @@ deviation_median = median(dev_i)     # 无样本则 0
 
 ### 7.3 20 日新高 / 新低家数比
 
-中期扩散诊断，语义类似 MSI 的 `nh_nl`，但窗口固定为 `NH_NL_WINDOW`（与 MSI 的 `days` 入参无关）。
+中期扩散诊断（家数新高新低），窗口固定为 `NH_NL_WINDOW`（与 MSI 的 `days` 入参无关；短线 MSI 已不再使用跨日新高新低因子）。
 
 对末日每只历史足够的股票（至少 `NH_NL_WINDOW` 根有效 K 线）：
 

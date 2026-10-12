@@ -34,22 +34,14 @@ pub struct MsiLayers {
     pub constraint: f64,
 }
 
+/// 单日分量（规范 §5；全部仅用当日截面）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MsiComponents {
     pub breadth: f64,
     pub money_flow: f64,
-    pub gap_breadth: f64,
-    /// 结构确认（家数方向 vs 等权均涨跌幅，见规范 §5.4）
     pub structure: f64,
-    /// 新高/新低家数比
-    pub nh_nl: f64,
-    pub directed_volume: f64,
-    pub volume_ratio: f64,
     pub limit_pressure: f64,
-    pub range_position: f64,
     pub intraday_position: f64,
-    /// 连续涨跌 / 未涨跌惯性
-    pub inertia: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,17 +52,9 @@ pub struct MsiDiagnostics {
     pub flat_count: usize,
     pub limit_up_count: usize,
     pub limit_down_count: usize,
-    pub breadth_last: f64,
-    pub money_flow_last: f64,
-    pub gap_breadth_last: f64,
-    pub structure_last: f64,
-    pub nh_nl_last: f64,
-    pub new_high_count: usize,
-    pub new_low_count: usize,
-    pub avg_up_streak: f64,
-    pub avg_down_streak: f64,
-    pub avg_no_up_streak: f64,
-    pub avg_no_down_streak: f64,
+    pub breadth_raw: f64,
+    pub money_flow_raw: f64,
+    pub structure_raw: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +68,7 @@ pub enum VolumeStatus {
 }
 
 impl VolumeStatus {
+    #[allow(dead_code)]
     pub fn from_ratio(ratio: f64) -> Self {
         if ratio >= 2.0 {
             Self::ExtremeHigh
@@ -180,14 +165,37 @@ pub struct MsiSignal {
     pub price_position: f64,
 }
 
+/// 单个交易日的情绪结果。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MsiResult {
+pub struct MsiDayResult {
+    pub date: String,
     pub value: f64,
     pub layers: MsiLayers,
     pub components: MsiComponents,
-    pub days: usize,
     pub signal: MsiSignal,
     pub diagnostics: MsiDiagnostics,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MsiDayPoint {
+    pub date: String,
+    pub value: f64,
+}
+
+/// 近 N 日日分加权。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MsiRecentResult {
+    pub value: f64,
+    pub days: usize,
+    pub series: Vec<MsiDayPoint>,
+}
+
+/// 短线双读数：当日 + 近 N 日（规范 §6）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MsiResult {
+    pub today: MsiDayResult,
+    pub recent: MsiRecentResult,
+    pub days: usize,
     pub calculated_at: String,
 }
 
