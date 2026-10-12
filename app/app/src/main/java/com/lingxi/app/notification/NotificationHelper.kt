@@ -20,7 +20,7 @@ import me.leolin.shortcutbadger.ShortcutBadger
 object NotificationHelper {
 
     const val CHANNEL_ID = "lingxi_alerts"
-    const val CHANNEL_NAME = "条件提醒"
+    const val CHANNEL_NAME = "行情提醒"
     const val FOREGROUND_CHANNEL_ID = "lingxi_service"
     const val FOREGROUND_CHANNEL_NAME = "后台监听"
 

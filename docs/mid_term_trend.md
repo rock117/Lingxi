@@ -394,8 +394,7 @@ function mtt_status(score):
 GET /api/market/mid-term-trend
 ```
 
-默认读最近约 70 个交易日的 `sc_stock` + `sc_stock_kline_d1_bfq`（**始终读库**，不调实时行情）；交易日列表优先 `sc_trade_calendar`。  
-本地假行情：服务端 **`MARKET_USE_MOCK=true`**（无查询参数）。
+默认读最近约 70 个交易日的 `sc_stock` + `sc_stock_kline_d1_bfq`（**始终读库**，不调实时行情）；交易日列表优先 `sc_trade_calendar`。
 
 响应示例：
 
@@ -440,7 +439,6 @@ GET /api/market/mid-term-trend
 | 响应结构体 / `MttStatus` | `backend/src/market/domain.rs` |
 | HTTP `GET /api/market/mid-term-trend` | `backend/src/market/routes.rs` |
 | 真实 OHLC（`sc_*` 表） | `backend/src/market/data_source.rs` |
-| Mock 输入 | `backend/src/market/mock_data.rs` |
 
 本文档仍为 SoT；禁止只改代码不改本文档。
 

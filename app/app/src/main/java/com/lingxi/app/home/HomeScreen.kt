@@ -102,8 +102,8 @@ fun HomeScreen(
                 1 -> FloatingActionButton(onClick = onCreateCondition) {
                     Icon(Icons.Default.Add, contentDescription = "新建条件")
                 }
-                2 -> FloatingActionButton(onClick = { notificationViewModel.pushMock() }) {
-                    Icon(Icons.Default.NotificationsActive, contentDescription = "模拟推送")
+                2 -> FloatingActionButton(onClick = { notificationViewModel.refresh() }) {
+                    Icon(Icons.Default.NotificationsActive, contentDescription = "刷新通知")
                 }
             }
         },

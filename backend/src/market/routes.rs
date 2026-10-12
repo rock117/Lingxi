@@ -1,24 +1,24 @@
 //! 市场指标 HTTP API
-//! - MSI：`docs/market_sentiment.md` §10
-//! - MTT：`docs/mid_term_trend.md` §10
+//! - MSI：`docs/market_sentiment.md`
+//! - MTT：`docs/mid_term_trend.md`
+//! - 日内强势：`docs/intraday_alert.md`
 //!
-//! 默认读 `sc_stock` + `sc_stock_kline_d1_bfq`。
-//! 仅 MSI 在盘中（上海周一至周五 09:30–18:00）对最新交易日改用 Miana 实时行情；MTT 始终读库。
-//! 若需本地假行情：服务端环境变量 `MARKET_USE_MOCK=true`（无查询参数）。
+//! 一律读真实行情：`sc_stock` + `sc_stock_kline_d1_bfq`；
+//! MSI / 日内推送在盘中对最新交易日叠加 Miana 实时行情。
 
 use rocket::get;
 use rocket::serde::json::Json;
 use sea_orm::DatabaseConnection;
 
-use crate::config::AppConfig;
 use crate::error::{AppError, AppResult};
 
 use super::calculator;
 use super::data_source;
 use super::domain::{MarketDataInput, MsiResult, MttResult};
+use super::intraday_alert::IntradayAlertResult;
+use super::intraday_push;
 use super::mid_term;
 use super::miana::MianaClient;
-use super::mock_data;
 use super::realtime_cache::RealtimeDayCache;
 use super::session;
 
@@ -52,34 +52,17 @@ fn ensure_non_empty(input: MarketDataInput, realtime_session: bool) -> AppResult
     Ok(input)
 }
 
-/// MSI：盘中可叠加实时最新日。
 async fn load_msi_input(
     db: &DatabaseConnection,
     days: usize,
-    use_mock: bool,
     miana: &MianaClient,
     cache: &RealtimeDayCache,
 ) -> AppResult<MarketDataInput> {
-    if use_mock {
-        tracing::warn!("MARKET_USE_MOCK=true，使用本地 Mock 行情 (days={})", days);
-        return Ok(mock_data::generate_mock_data_with_bias(days, 0.0));
-    }
-
     let input = data_source::load_market_window_hybrid(db, days, miana, cache).await?;
     ensure_non_empty(input, session::is_realtime_session_now())
 }
 
-/// MTT：始终只读数据库（不调实时行情）。
-async fn load_mtt_input(
-    db: &DatabaseConnection,
-    days: usize,
-    use_mock: bool,
-) -> AppResult<MarketDataInput> {
-    if use_mock {
-        tracing::warn!("MARKET_USE_MOCK=true，使用本地 Mock 行情 (days={})", days);
-        return Ok(mock_data::generate_mock_data_with_bias(days, 0.15));
-    }
-
+async fn load_mtt_input(db: &DatabaseConnection, days: usize) -> AppResult<MarketDataInput> {
     let input = data_source::load_market_window(db, days).await?;
     ensure_non_empty(input, false)
 }
@@ -88,26 +71,23 @@ async fn load_mtt_input(
 #[get("/api/market/sentiment?<days>")]
 pub async fn sentiment(
     db: &rocket::State<DatabaseConnection>,
-    cfg: &rocket::State<AppConfig>,
     miana: &rocket::State<MianaClient>,
     cache: &rocket::State<RealtimeDayCache>,
     days: Option<usize>,
 ) -> AppResult<Json<MsiResult>> {
     let days = days.unwrap_or(5).clamp(3, 30);
-    let use_mock = cfg.market_use_mock;
 
-    let input = load_msi_input(db.inner(), days, use_mock, miana.inner(), cache.inner()).await?;
+    let input = load_msi_input(db.inner(), days, miana.inner(), cache.inner()).await?;
     let result = calculator::calculate_msi(&input);
 
     tracing::info!(
-        "市场情绪: today={:.1} recent={:.1} dir={:.1} int={:.1} con={:.1} signal={} mock={}",
+        "市场情绪: today={:.1} recent={:.1} dir={:.1} int={:.1} con={:.1} signal={}",
         result.today.value,
         result.recent.value,
         result.today.layers.direction,
         result.today.layers.intensity,
         result.today.layers.constraint,
         result.today.signal.label,
-        use_mock
     );
 
     Ok(Json(result))
@@ -117,22 +97,31 @@ pub async fn sentiment(
 #[get("/api/market/mid-term-trend")]
 pub async fn mid_term_trend(
     db: &rocket::State<DatabaseConnection>,
-    cfg: &rocket::State<AppConfig>,
 ) -> AppResult<Json<MttResult>> {
-    let use_mock = cfg.market_use_mock;
-
-    let input = load_mtt_input(db.inner(), MTT_LOOKBACK_DAYS, use_mock).await?;
+    let input = load_mtt_input(db.inner(), MTT_LOOKBACK_DAYS).await?;
     let result = mid_term::calculate_mtt(&input);
 
     tracing::info!(
-        "中期趋势: MTT={:.1} status={} bull={} bear={} neutral={} mock={}",
+        "中期趋势: MTT={:.1} status={} bull={} bear={} neutral={}",
         result.value,
         result.status.label(),
         result.counts.bull,
         result.counts.bear,
         result.counts.neutral,
-        use_mock
     );
 
+    Ok(Json(result))
+}
+
+/// `GET /api/market/intraday-alerts` — 立即计算一轮（不落库、不推送）。
+#[get("/api/market/intraday-alerts")]
+pub async fn intraday_alerts(
+    db: &rocket::State<DatabaseConnection>,
+    miana: &rocket::State<MianaClient>,
+    cache: &rocket::State<RealtimeDayCache>,
+) -> AppResult<Json<IntradayAlertResult>> {
+    let result = intraday_push::compute_now(db.inner(), miana.inner(), cache.inner())
+        .await
+        .map_err(|e| AppError::Internal(e))?;
     Ok(Json(result))
 }

@@ -334,8 +334,6 @@ GET /api/market/sentiment?days=5
 
 数据源：`sc_stock` + `sc_stock_kline_d1_bfq`；交易日优先 `sc_trade_calendar`。  
 盘中最新日：Miana `/api/stock/v3/realtime`（仅 MSI）。  
-`MARKET_USE_MOCK=true` 时用本地假数据。
-
 ### 8.1 响应
 
 | 字段 | 含义 |

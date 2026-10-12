@@ -1,21 +1,57 @@
 package com.lingxi.app.viewmodel
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.lingxi.app.data.mock.MockRepository
+import com.lingxi.app.data.api.ApiClient
 import com.lingxi.app.data.model.Condition
-import kotlinx.coroutines.flow.SharingStarted
+import com.lingxi.app.data.model.CreateConditionRequest
+import com.lingxi.app.data.model.UpdateConditionRequest
+import com.lingxi.app.data.prefs.ServerPrefs
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
-class ConditionViewModel : ViewModel() {
-    // TODO: 接入后端后改为 LingxiApi.listConditions() / create / update / delete
-    val conditions: StateFlow<List<Condition>> = MockRepository.conditions
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+class ConditionViewModel(application: Application) : AndroidViewModel(application) {
+    private val prefs = ServerPrefs(application)
 
-    fun setEnabled(id: Long, enabled: Boolean) = MockRepository.setEnabled(id, enabled)
+    private val _conditions = MutableStateFlow<List<Condition>>(emptyList())
+    val conditions: StateFlow<List<Condition>> = _conditions.asStateFlow()
 
-    fun delete(id: Long) = MockRepository.deleteCondition(id)
+    init {
+        refresh()
+    }
+
+    fun refresh() {
+        viewModelScope.launch {
+            runCatching {
+                val api = ApiClient.create(prefs.configFlow.first())
+                _conditions.value = api.listConditions()
+            }
+        }
+    }
+
+    fun setEnabled(id: Long, enabled: Boolean) {
+        viewModelScope.launch {
+            runCatching {
+                val api = ApiClient.create(prefs.configFlow.first())
+                val saved = api.updateCondition(id, UpdateConditionRequest(enabled = enabled))
+                _conditions.value = _conditions.value.map { if (it.id == id) saved else it }
+            }
+        }
+    }
+
+    fun delete(id: Long) {
+        viewModelScope.launch {
+            runCatching {
+                val api = ApiClient.create(prefs.configFlow.first())
+                api.deleteCondition(id)
+                _conditions.value = _conditions.value.filter { it.id != id }
+            }
+        }
+    }
 
     fun saveNew(
         name: String,
@@ -24,10 +60,41 @@ class ConditionViewModel : ViewModel() {
         expression: String,
         enabled: Boolean,
     ) {
-        MockRepository.addCondition(name, kind, symbol, expression, enabled)
+        viewModelScope.launch {
+            runCatching {
+                val api = ApiClient.create(prefs.configFlow.first())
+                api.createCondition(
+                    CreateConditionRequest(
+                        name = name,
+                        kind = kind,
+                        symbol = symbol,
+                        expression = expression,
+                        enabled = enabled,
+                    ),
+                )
+                refresh()
+            }
+        }
     }
 
-    fun update(item: Condition) = MockRepository.updateCondition(item)
+    fun update(item: Condition) {
+        viewModelScope.launch {
+            runCatching {
+                val api = ApiClient.create(prefs.configFlow.first())
+                api.updateCondition(
+                    item.id,
+                    UpdateConditionRequest(
+                        name = item.name,
+                        kind = item.kind,
+                        symbol = item.symbol,
+                        expression = item.expression,
+                        enabled = item.enabled,
+                    ),
+                )
+                refresh()
+            }
+        }
+    }
 
-    fun findById(id: Long): Condition? = conditions.value.find { it.id == id }
+    fun findById(id: Long): Condition? = _conditions.value.find { it.id == id }
 }

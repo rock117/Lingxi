@@ -1,7 +1,6 @@
 mod access_log;
 mod config;
 mod db;
-mod engine;
 mod error;
 mod logging;
 mod market;
@@ -71,11 +70,8 @@ async fn rocket() -> _ {
     let cfg = AppConfig::default();
     init_logging(&cfg);
 
-    if cfg.market_use_mock {
-        tracing::warn!("MARKET_USE_MOCK=true：MSI/MTT 将使用本地 Mock 行情");
-    }
-    if !cfg.market_use_mock && cfg.miana_token.trim().is_empty() {
-        tracing::warn!("MIANA_TOKEN 未配置：盘中实时行情窗口将无法覆盖最新交易日");
+    if cfg.miana_token.trim().is_empty() {
+        tracing::warn!("MIANA_TOKEN 未配置：盘中实时行情与日内推送将不可用");
     }
 
     let miana = market::miana::MianaClient::new(&cfg).expect("初始化 Miana 客户端失败");
@@ -87,26 +83,19 @@ async fn rocket() -> _ {
         .await
         .expect("数据库初始化失败");
 
-    if !cfg.market_use_mock {
-        match market::data_source::probe_market_tables(&db).await {
-            Ok((n, last)) => tracing::info!(
-                "行情源就绪: active_stocks={} last_kline_date={:?} realtime_session={}",
-                n,
-                last,
-                market::session::is_realtime_session_now(),
-            ),
-            Err(e) => tracing::warn!(
-                "行情表探测失败（MSI/MTT 将无法使用真实行情）: {}",
-                e
-            ),
-        }
+    match market::data_source::probe_market_tables(&db).await {
+        Ok((n, last)) => tracing::info!(
+            "行情源就绪: active_stocks={} last_kline_date={:?} realtime_session={}",
+            n,
+            last,
+            market::session::is_realtime_session_now(),
+        ),
+        Err(e) => tracing::warn!("行情表探测失败（MSI/MTT/日内推送将无法使用真实行情）: {}", e),
     }
 
-    // WebSocket Hub
+    // WebSocket Hub + 日内强势推送（每 5 分钟）
     let hub = Hub::new(256);
-
-    // 启动 Mock 引擎
-    engine::mock::spawn(db.clone(), hub.clone(), 10);
+    market::intraday_push::spawn(db.clone(), hub.clone(), miana.clone(), realtime_cache.clone());
 
     // CORS：允许所有来源（个人自用，方便 App 调试）
     let mut methods = HashSet::new();
@@ -153,6 +142,7 @@ async fn rocket() -> _ {
                 routes::notification::mark_read,
                 market::routes::sentiment,
                 market::routes::mid_term_trend,
+                market::routes::intraday_alerts,
                 ws::ws_handler,
             ],
         )

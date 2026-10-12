@@ -18,7 +18,7 @@ import retrofit2.http.Query
 /**
  * 后端 REST 接口。
  *
- * 行情类接口无客户端 mock 参数；是否使用假行情由服务端 `MARKET_USE_MOCK` 决定。
+ * 行情与通知一律走后端真实行情 / WebSocket 推送。
  */
 interface LingxiApi {
     @GET("api/health")

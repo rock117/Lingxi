@@ -42,7 +42,7 @@ fun NotificationListScreen(viewModel: NotificationViewModel) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "点击条目标记已读 · FAB 模拟推送",
+                text = "点击条目标记已读 · FAB 从服务器刷新",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),

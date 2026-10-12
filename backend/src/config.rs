@@ -1,23 +1,11 @@
 use std::env;
 use std::path::PathBuf;
 
-fn env_bool(key: &str, default: bool) -> bool {
-    match env::var(key) {
-        Ok(v) => matches!(
-            v.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        ),
-        Err(_) => default,
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct AppConfig {
     pub database_url: String,
     pub host: String,
     pub port: u16,
-    /// 为 true 时 MSI/MTT 使用本地生成行情（仅服务端配置，无 HTTP 参数）。
-    pub market_use_mock: bool,
     /// Miana Open API 根地址。
     pub miana_base_url: String,
     /// Miana token（盘中实时行情必填）。
@@ -43,7 +31,6 @@ impl Default for AppConfig {
                 .ok()
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(8000),
-            market_use_mock: env_bool("MARKET_USE_MOCK", false),
             miana_base_url: env::var("MIANA_BASE_URL")
                 .unwrap_or_else(|_| "https://miana.com.cn".to_string()),
             miana_token: env::var("MIANA_TOKEN").unwrap_or_default(),

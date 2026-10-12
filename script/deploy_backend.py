@@ -56,13 +56,6 @@ DATABASE_URL = os.getenv(
 ).strip()
 # 远端 systemd 可用独立连接串；未设置则用 DATABASE_URL
 DEPLOY_DATABASE_URL = os.getenv("deploy_database_url", DATABASE_URL).strip()
-# 服务端行情 Mock（写入 systemd；默认 false，勿通过 API 传参）
-MARKET_USE_MOCK = os.getenv("MARKET_USE_MOCK", "false").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-    "on",
-)
 MIANA_BASE_URL = os.getenv("MIANA_BASE_URL", "https://miana.com.cn").strip()
 MIANA_TOKEN = os.getenv("MIANA_TOKEN", "").strip()
 MIANA_RATE_LIMIT_PER_MIN = os.getenv("MIANA_RATE_LIMIT_PER_MIN", "480").strip()
@@ -211,7 +204,6 @@ def systemd_unit(
     app_dir: str,
     port: int,
     database_url: str,
-    market_use_mock: bool,
     miana_base_url: str,
     miana_token: str,
     miana_rate_limit_per_min: str,
@@ -221,7 +213,6 @@ def systemd_unit(
     bin_path = f"{app_dir}/{BINARY_NAME}"
     log_dir = f"{app_dir.rstrip('/')}/log"
     db_esc = database_url.replace("%", "%%")
-    mock_flag = "true" if market_use_mock else "false"
     miana_esc = miana_token.replace("%", "%%")
     base_esc = miana_base_url.replace("%", "%%")
     return f"""[Unit]
@@ -234,7 +225,6 @@ WorkingDirectory={app_dir}
 Environment=HOST=0.0.0.0
 Environment=PORT={port}
 Environment=DATABASE_URL={db_esc}
-Environment=MARKET_USE_MOCK={mock_flag}
 Environment=MIANA_BASE_URL={base_esc}
 Environment=MIANA_TOKEN={miana_esc}
 Environment=MIANA_RATE_LIMIT_PER_MIN={miana_rate_limit_per_min}
@@ -263,7 +253,6 @@ def ensure_systemd_and_restart(
             app_dir,
             LISTEN_PORT,
             DEPLOY_DATABASE_URL,
-            MARKET_USE_MOCK,
             MIANA_BASE_URL,
             MIANA_TOKEN,
             MIANA_RATE_LIMIT_PER_MIN,

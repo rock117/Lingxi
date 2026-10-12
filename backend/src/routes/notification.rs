@@ -12,7 +12,8 @@ pub struct NotificationOut {
     pub condition_id: i64,
     pub title: String,
     pub body: String,
-    pub payload: Option<serde_json::Value>,
+    /// 原始 JSON 字符串（与 WebSocket / App 模型一致）。
+    pub payload: Option<String>,
     pub read: bool,
     pub created_at: String,
 }
@@ -20,18 +21,12 @@ pub struct NotificationOut {
 impl TryFrom<notification::Model> for NotificationOut {
     type Error = AppError;
     fn try_from(m: notification::Model) -> AppResult<Self> {
-        let payload = match m.payload {
-            Some(s) => Some(serde_json::from_str(&s).map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("payload JSON 解析失败: {e}"))
-            })?),
-            None => None,
-        };
         Ok(Self {
             id: m.id,
             condition_id: m.condition_id,
             title: m.title,
             body: m.body,
-            payload,
+            payload: m.payload,
             read: m.read,
             created_at: m.created_at,
         })

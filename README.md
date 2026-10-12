@@ -38,15 +38,15 @@ Lingxi/
 │  (Android)      │                                  │  (Rocket+tokio)  │
 │                 │       WebSocket (push)           │                  │
 │                 │ ◄─────────────────────────────── │  ┌────────────┐  │
-└─────────────────┘                                  │  │ Mock Engine│  │
-                                                     │  │ (周期触发) │  │
+└─────────────────┘                                  │  │ Intraday   │  │
+                                                     │  │ Alert 5min │  │
                                                      │  └────────────┘  │
                                                      │ PostgreSQL       │
                                                      └──────────────────┘
 ```
 
-- **后台 API**：短线情绪为「今日（纯当日截面）+ 近 N 日日分加权」，请求时现算不落库；盘中今日用 Miana 实时，其余读 `sc_stock` / `sc_stock_kline_d1_bfq`；中期 MTT 仍读库长窗；条件匹配经 WebSocket 推送并持久化。
-- **App**：情绪页展示今日 / 近 N 日 / MTT（可设刷新间隔，默认 5 分钟）；条件/通知列表暂仍用本地内存数据。
+- **后台 API**：短线情绪为「今日（纯当日截面）+ 近 N 日日分加权」，请求时现算不落库；盘中今日用 Miana 实时，其余读 `sc_stock` / `sc_stock_kline_d1_bfq`；中期 MTT 仍读库长窗；交易时段每 5 分钟计算日内强势 Top10，经 WebSocket 推送并落库。
+- **App**：情绪页展示今日 / 近 N 日 / MTT；条件/通知走后端 API；前台服务维持 WebSocket 收推送。
 
 ## 技术栈
 
@@ -61,7 +61,7 @@ Lingxi/
 - ViewModel + StateFlow — 状态管理
 - DataStore Preferences — 服务器配置本地持久化
 - Navigation Compose — 页面导航
-- Retrofit / OkHttp / WebSocket — 情绪与健康检查走后端；条件/通知列表暂本地持久前内存实现
+- Retrofit / OkHttp / WebSocket — 情绪、条件、通知与推送均走后端
 
 ## 快速开始
 
@@ -123,9 +123,8 @@ powershell -ExecutionPolicy Bypass -File .\install-debug.ps1 -Logcat
 
 依赖仓库已配置国内镜像（`settings.gradle.kts`：阿里云 / 腾讯云 / 华为云优先，官方兜底）；`gradlew` 的 Gradle 发行包用腾讯云。首次拉 Compose 等大包仍可能较慢，之后有本地缓存会快很多。若仍超时，可用本机 Gradle + `install-debug.bat`。
 
-情绪页与「测试连接」走真实后端；条件/通知列表暂仍在 App 内存中（待接 API）。  
-行情是否使用假数据由服务端环境变量 `MARKET_USE_MOCK` 控制（默认 `false`），客户端无 mock 开关。  
-盘中实时行情需配置 `MIANA_TOKEN`（及可选 `MIANA_BASE_URL` / `MIANA_RATE_LIMIT_PER_MIN`），部署脚本会写入 systemd。  
+情绪 / 条件 / 通知均走真实后端；通知经 WebSocket `/ws` 接收（日内强势 Top10 每 5 分钟推送）。  
+盘中实时与日内推送需配置 `MIANA_TOKEN`（及可选 `MIANA_BASE_URL` / `MIANA_RATE_LIMIT_PER_MIN`），部署脚本会写入 systemd。  
 设置页默认服务器地址在**构建时**从仓库根目录 `.env` 注入（`app_server_host`，缺省则用 `ssh_server`）；用户改过设置后以 DataStore 为准；情绪刷新间隔默认可在设置页修改。
 
 ### 部署后端到远端
@@ -238,6 +237,9 @@ python script/deploy_backend.py --service-only
 | DELETE | `/api/conditions/:id` | 删除条件 |
 | GET | `/api/notifications` | 列出通知（`?unread=true` 过滤未读） |
 | POST | `/api/notifications/:id/read` | 标记通知已读 |
-| WS | `/ws` | WebSocket 推送通道 |
+| GET | `/api/market/sentiment` | 短线情绪 MSI |
+| GET | `/api/market/mid-term-trend` | 中期趋势 MTT |
+| GET | `/api/market/intraday-alerts` | 日内强势 Top10（即时计算，不推送） |
+| WS | `/ws` | WebSocket 推送（含日内强势通知） |
 
 更多细节（数据模型、条件表达式格式等）见 [PLAN.md](./PLAN.md)。

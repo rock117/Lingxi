@@ -33,6 +33,25 @@ pub fn shanghai_today() -> String {
         .to_string()
 }
 
+/// 日内强势推送窗口：工作日 09:35–11:30、13:05–14:55（上海）。
+pub fn is_intraday_push_session_now() -> bool {
+    is_intraday_push_session_at(Utc::now())
+}
+
+pub fn is_intraday_push_session_at(utc: chrono::DateTime<Utc>) -> bool {
+    let sh = utc.with_timezone(&shanghai_offset());
+    match sh.weekday() {
+        Weekday::Sat | Weekday::Sun => return false,
+        _ => {}
+    }
+    let minutes = sh.hour() as i32 * 60 + sh.minute() as i32;
+    const AM_LO: i32 = 9 * 60 + 35;
+    const AM_HI: i32 = 11 * 60 + 30;
+    const PM_LO: i32 = 13 * 60 + 5;
+    const PM_HI: i32 = 14 * 60 + 55;
+    (minutes >= AM_LO && minutes <= AM_HI) || (minutes >= PM_LO && minutes <= PM_HI)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,5 +86,19 @@ mod tests {
         // 2026-10-10 周六 12:00 CST
         let t = Utc.with_ymd_and_hms(2026, 10, 10, 4, 0, 0).unwrap();
         assert!(!is_realtime_session_at(t));
+    }
+
+    #[test]
+    fn push_window_am() {
+        // 2026-10-09 周五 10:00 CST
+        let t = Utc.with_ymd_and_hms(2026, 10, 9, 2, 0, 0).unwrap();
+        assert!(is_intraday_push_session_at(t));
+    }
+
+    #[test]
+    fn push_window_lunch_off() {
+        // 12:00 CST
+        let t = Utc.with_ymd_and_hms(2026, 10, 9, 4, 0, 0).unwrap();
+        assert!(!is_intraday_push_session_at(t));
     }
 }
