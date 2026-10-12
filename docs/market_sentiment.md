@@ -179,28 +179,23 @@ money_flow_score = map(money_raw)
 
 ### 5.3 结构 `structure_score`
 
+**含义**：涨跌**家数方向**与等权**均涨跌幅**是否同向确认。同向偏多 → 高分；同向偏空 → 低分；背离 → 靠近中性。
+
+**注意**：不可写成 `breadth_raw * ret_sig` 再 `map`——双负会乘成正，空头确认被翻成偏多。
+
 ```
-majority = breadth_raw          # 与 §5.1 相同原始宽度
-mean_ret = mean(change_pct of all valid stocks)   # 百分点
-ret_sig  = tanh(mean_ret / RET_SCALE)
-# 家数方向与涨跌幅同向则加强；严重背离靠近 0
-if majority == 0 and ret_sig == 0:
-    structure_raw = 0
-else:
-    structure_raw = clamp(majority * abs(ret_sig) * sign_align, -1, 1)
-    # sign_align: majority 与 ret_sig 同号为 +1，异号为 -1；任一方为 0 则 structure_raw = 0
+majority = breadth_raw                              # 与 §5.1 相同
+mean_ret = mean(change_pct of all valid stocks)     # 百分点，等权
+ret_sig  = tanh(mean_ret / RET_SCALE)               # ∈ (-1, 1)
+structure_raw = clamp( (majority + ret_sig) / 2, -1, 1 )
 structure_score = map(structure_raw)
 ```
 
-实现约定（与历史引擎一致、可单测）：
-
-```
-structure_raw = clamp(majority * ret_sig 的同向确认形式, -1, 1)
-# 具体：structure_d = majority * tanh(mean_ret/RET_SCALE) 在「同号加强」语义下
-# 采用：raw = majority（宽度）与 ret_side=tanh(mean_ret/RET_SCALE) 的乘积再 clamp
-structure_raw = clamp(majority * tanh(mean_ret / RET_SCALE), -1, 1)
-structure_score = map(structure_raw)
-```
+| 情况 | 结果 |
+|---|---|
+| 家数偏多且均涨幅为正 | 两者皆正 → 结构 > 50 |
+| 家数偏空且均涨幅为负 | 两者皆负 → 结构 < 50 |
+| 家数与均涨跌幅反向 | 正负相抵 → 靠近 50 |
 
 ### 5.4 有方向波动 `directed_move_score`（= Intensity）
 

@@ -125,7 +125,8 @@ fn daily_structure_raw(stocks: &[StockDailyData], breadth_raw: f64) -> f64 {
     }
     let mean_ret = mean(&stocks.iter().map(|s| s.change_pct).collect::<Vec<_>>());
     let ret_sig = (mean_ret / RET_SCALE).tanh();
-    (breadth_raw * ret_sig).clamp(-1.0, 1.0)
+    // 算术均值保号：双负 → 负（偏空）；不可用乘积（双负会翻成正）
+    ((breadth_raw + ret_sig) / 2.0).clamp(-1.0, 1.0)
 }
 
 /// 涨跌停计数 + 在「已涨跌停」集合内的多空差（信号辅助；不进强度层）。
@@ -457,6 +458,27 @@ mod tests {
             r.layers.intensity
         );
         assert!((r.components.directed_move - r.layers.intensity).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_structure_bearish_confirmation_below_50() {
+        // 家数偏空 + 均跌：结构必须 < 50（不可被乘积翻成偏多）
+        let s = snap(
+            "2026-01-01",
+            vec![
+                bar("A", -2.0, 100.0, 10.0, 10.0, 9.5, 9.6),
+                bar("B", -2.0, 100.0, 10.0, 10.0, 9.5, 9.6),
+                bar("C", -2.0, 100.0, 10.0, 10.0, 9.5, 9.6),
+                bar("D", 0.5, 100.0, 10.0, 10.2, 9.9, 10.1),
+            ],
+        );
+        let r = calculate_msi_daily(&s);
+        assert!(
+            r.components.structure < 45.0,
+            "同向偏空结构应明显 < 50, 实际 {}",
+            r.components.structure
+        );
+        assert!(r.diagnostics.structure_raw < 0.0);
     }
 
     #[test]

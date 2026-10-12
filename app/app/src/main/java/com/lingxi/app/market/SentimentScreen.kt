@@ -448,7 +448,7 @@ private fun directionFactors(c: MsiComponents, d: MsiDiagnostics): List<FactorRo
     FactorRow(
         name = "结构",
         score = c.structure,
-        meaning = "家数方向与等权均涨跌幅是否同向；严重背离会靠近中性",
+        meaning = "家数方向与等权均涨跌幅取平均确认；同向偏空为低分，背离靠近中性",
     ),
 )
 
