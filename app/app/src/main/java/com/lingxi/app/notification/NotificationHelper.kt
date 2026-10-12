@@ -72,10 +72,12 @@ object NotificationHelper {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
+        val preview = item.body.lineSequence().firstOrNull().orEmpty().ifBlank { item.body }
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(item.title)
-            .setContentText(item.body)
+            .setContentText(preview)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(item.body))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(pendingTap)

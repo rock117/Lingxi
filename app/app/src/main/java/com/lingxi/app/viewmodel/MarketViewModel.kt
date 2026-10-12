@@ -21,9 +21,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 
 data class MarketUiState(
     val loading: Boolean = false,
@@ -31,7 +31,7 @@ data class MarketUiState(
     val mtt: MttResult? = null,
     val error: String? = null,
     val serverHint: String = "",
-    /** 最近一次 MSI/MTT 均成功拉取的本地时间文案；从未成功则为 null。 */
+    /** 最近一次 MSI/MTT 均成功拉取的上海时间文案；从未成功则为 null。 */
     val lastSuccessAt: String? = null,
     val refreshIntervalMinutes: Int = 5,
 )
@@ -46,7 +46,8 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
     val ui: StateFlow<MarketUiState> = _ui.asStateFlow()
 
     private var autoRefreshJob: Job? = null
-    private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+    private val shanghaiZone = ZoneId.of("Asia/Shanghai")
+    private val timeFmt = DateTimeFormatter.ofPattern("HH:mm:ss")
 
     init {
         viewModelScope.launch {
@@ -91,7 +92,11 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 val bothOk = msiResult.isSuccess && mttResult.isSuccess
-                val successAt = if (bothOk) timeFmt.format(Date()) else _ui.value.lastSuccessAt
+                val successAt = if (bothOk) {
+                    ZonedDateTime.now(shanghaiZone).format(timeFmt)
+                } else {
+                    _ui.value.lastSuccessAt
+                }
 
                 _ui.value = MarketUiState(
                     loading = false,

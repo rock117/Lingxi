@@ -173,7 +173,7 @@ fn neutral_result() -> MttResult {
             deviation_median: 0.0,
             nh_nl: 50.0,
         },
-        calculated_at: chrono::Utc::now().to_rfc3339(),
+        calculated_at: super::session::shanghai_now_rfc3339(),
     }
 }
 
@@ -290,7 +290,7 @@ pub fn calculate_mtt(input: &MarketDataInput) -> MttResult {
             deviation_median: median(deviations),
             nh_nl: map_to_score(nh_nl_raw),
         },
-        calculated_at: chrono::Utc::now().to_rfc3339(),
+        calculated_at: super::session::shanghai_now_rfc3339(),
     }
 }
 

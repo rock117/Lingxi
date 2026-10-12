@@ -22,11 +22,11 @@
 | 项 | 值 |
 |---|---|
 | 间隔 | 300 秒 |
-| 时段（上海） | 工作日 `09:35–11:30`、`13:05–14:55` |
-| 数据 | `load_market_window_hybrid(db, 6, …)`：近 5 个已收盘日；**仅交易日连续竞价时段**叠加当日 Miana |
+| 时段 | **暂不限制**（联调阶段全天每 5 分钟推送） |
+| 数据 | `load_market_window_hybrid(db, 6, …)`：近 5 个已收盘日；周一至周五竞价时段叠加当日 Miana，其余读库 |
 | 通道 | `PushMessage { type: "notification", data: NotificationItem }` |
 
-非推送时段跳过。实时仅周一至周五竞价时段（不查节假日日历）。无 `MIANA_TOKEN` 或样本为空时打日志并跳过。
+无 `MIANA_TOKEN` 或样本为空时打日志并跳过。
 
 ---
 
@@ -109,9 +109,11 @@ score = W_A A + W_B B + W_C C
 落库并广播一条通知：
 
 - `title`: `日内强势 Top10`  
-- `body`: 前若干只 `代码 得分 RS=+x.x%` 摘要  
-- `payload`: JSON 字符串，含 `r_mkt`、`items[]`（symbol/score/rs/change_pct/layers/reason）  
+- `body`: 多行摘要（系统通知用），含简称：`大盘等权` + 前 5 名  
+- `payload`: JSON，含 `r_mkt`、`items[]`（`symbol` / `name` / `score` / `rs` / …）  
 - `condition_id`: 系统条件 `kind=intraday_alert`（启动时确保存在）
+
+App 通知列表：解析 `payload` 做结构化行；**默认收起前 3 名，点卡片展开全部**，展开时标记已读。
 
 ---
 

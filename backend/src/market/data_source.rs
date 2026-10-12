@@ -210,6 +210,43 @@ pub async fn load_market_window_hybrid(
     Ok(input)
 }
 
+/// 批量查证券简称：`sc_stock.name`（按 symbol）。
+pub async fn load_stock_names(
+    db: &DatabaseConnection,
+    symbols: &[String],
+) -> Result<HashMap<String, String>, DbErr> {
+    if symbols.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    #[derive(Debug, FromQueryResult)]
+    struct NameRow {
+        symbol: String,
+        name: String,
+    }
+
+    // ANY($1) 需要 text[]；用 Postgres 数组字面量更省事
+    let mut list = String::from("ARRAY[");
+    for (i, s) in symbols.iter().enumerate() {
+        if i > 0 {
+            list.push(',');
+        }
+        list.push('\'');
+        list.push_str(&s.replace('\'', "''"));
+        list.push('\'');
+    }
+    list.push_str("]::text[]");
+
+    let sql = format!(
+        "SELECT symbol, COALESCE(name, '') AS name FROM sc_stock WHERE symbol = ANY({list})"
+    );
+    let rows = NameRow::find_by_statement(Statement::from_string(DbBackend::Postgres, sql))
+        .all(db)
+        .await?;
+
+    Ok(rows.into_iter().map(|r| (r.symbol, r.name)).collect())
+}
+
 /// 活跃股票完整代码（`代码.市场后缀`）。
 pub async fn load_active_symbols(db: &DatabaseConnection) -> Result<Vec<String>, DbErr> {
     #[derive(Debug, FromQueryResult)]

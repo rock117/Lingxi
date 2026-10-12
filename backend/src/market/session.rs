@@ -40,7 +40,16 @@ pub fn shanghai_today_at(utc: chrono::DateTime<Utc>) -> String {
         .to_string()
 }
 
+/// 当前上海时间 RFC3339（带 `+08:00`，项目统一用此时区落库/推送）。
+pub fn shanghai_now_rfc3339() -> String {
+    Utc::now()
+        .with_timezone(&shanghai_offset())
+        .to_rfc3339()
+}
+
 /// 日内强势推送窗口：工作日竞价内略收紧（避开开盘/收盘噪声）。
+/// 联调阶段推送暂不限制时段；保留供恢复时段门闩时使用。
+#[allow(dead_code)]
 pub fn is_intraday_push_session_now() -> bool {
     is_intraday_push_session_at(Utc::now())
 }
@@ -121,5 +130,14 @@ mod tests {
         let t = Utc.with_ymd_and_hms(2026, 10, 9, 1, 32, 0).unwrap();
         assert!(is_realtime_session_at(t));
         assert!(!is_intraday_push_session_at(t));
+    }
+
+    #[test]
+    fn shanghai_now_has_plus08() {
+        let s = shanghai_now_rfc3339();
+        assert!(
+            s.contains("+08:00") || s.ends_with("+0800"),
+            "expected Shanghai offset, got {s}"
+        );
     }
 }

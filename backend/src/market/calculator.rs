@@ -341,7 +341,7 @@ pub fn calculate_msi(input: &MarketDataInput) -> MsiResult {
                 series: vec![],
             },
             days: 0,
-            calculated_at: chrono::Utc::now().to_rfc3339(),
+            calculated_at: super::session::shanghai_now_rfc3339(),
         };
     }
 
@@ -368,7 +368,7 @@ pub fn calculate_msi(input: &MarketDataInput) -> MsiResult {
             series,
         },
         days: input.snapshots.len(),
-        calculated_at: chrono::Utc::now().to_rfc3339(),
+        calculated_at: super::session::shanghai_now_rfc3339(),
     }
 }
 

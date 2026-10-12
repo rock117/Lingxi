@@ -1,4 +1,3 @@
-use chrono::Utc;
 use entity::condition;
 use rocket::serde::json::Json;
 use rocket::{delete, get, post, put};
@@ -6,6 +5,7 @@ use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, ModelTrait, QueryFilte
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
+use crate::market::session;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateCondition {
@@ -68,7 +68,7 @@ pub async fn create(
     input: Json<CreateCondition>,
 ) -> AppResult<Json<ConditionOut>> {
     validate_kind(&input.kind)?;
-    let now = Utc::now().to_rfc3339();
+    let now = session::shanghai_now_rfc3339();
 
     let model = condition::ActiveModel {
         name: Set(input.name.clone()),
@@ -135,7 +135,7 @@ pub async fn update(
     if let Some(v) = input.enabled {
         active.enabled = Set(v);
     }
-    active.updated_at = Set(Utc::now().to_rfc3339());
+    active.updated_at = Set(session::shanghai_now_rfc3339());
 
     let saved = active.update(db.inner()).await?;
     Ok(Json(saved.into()))

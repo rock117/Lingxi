@@ -17,7 +17,7 @@ const INTERVAL_SECS: u64 = 300;
 const SYSTEM_KIND: &str = "intraday_alert";
 const SYSTEM_NAME: &str = "日内强势股";
 
-/// 启动后台任务：推送窗口内每 5 分钟一轮。
+/// 启动后台任务：每 5 分钟一轮（暂不限制交易时段，便于联调）。
 pub fn spawn(
     db: DatabaseConnection,
     hub: Hub,
@@ -31,11 +31,9 @@ pub fn spawn(
         ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
             ticker.tick().await;
-            if !session::is_intraday_push_session_now() {
-                continue;
-            }
-            if !miana.token_configured() {
-                warn!("跳过日内推送：未配置 MIANA_TOKEN");
+            // 竞价时段才需要 Miana；其余时间读库，无 token 也可推
+            if session::is_realtime_session_now() && !miana.token_configured() {
+                warn!("跳过日内推送：竞价时段未配置 MIANA_TOKEN");
                 continue;
             }
             match run_once(&db, &hub, &miana, &cache).await {
@@ -51,7 +49,7 @@ pub fn spawn(
         }
     });
     info!(
-        "日内强势推送已启动：间隔 {}s，窗口 09:35–11:30 / 13:05–14:55 CST",
+        "日内强势推送已启动：间隔 {}s（暂不限制时段）",
         INTERVAL_SECS
     );
 }
@@ -73,13 +71,14 @@ async fn run_once(
     cache: &RealtimeDayCache,
 ) -> anyhow::Result<Option<IntradayAlertResult>> {
     let input = data_source::load_market_window_hybrid(db, 6, miana, cache).await?;
-    let result = calculate_intraday_alerts(&input);
+    let mut result = calculate_intraday_alerts(&input);
     if result.items.is_empty() {
         return Ok(None);
     }
+    enrich_names(db, &mut result).await?;
 
     let cond_id = ensure_system_condition(db).await?;
-    let now = Utc::now().to_rfc3339();
+    let now = session::shanghai_now_rfc3339();
     let title = format!("日内强势 Top{}", result.items.len());
     let body = format_body(&result);
     let payload_val = serde_json::json!({
@@ -117,18 +116,52 @@ async fn run_once(
     Ok(Some(result))
 }
 
+fn short_code(symbol: &str) -> &str {
+    symbol.split('.').next().unwrap_or(symbol)
+}
+
+fn format_item_line(rank: usize, i: &super::intraday_alert::AlertItem) -> String {
+    let code = short_code(&i.symbol);
+    if i.name.is_empty() {
+        format!("{}. {} 得分{:.0} 相对{:+.1}%", rank, code, i.score, i.rs)
+    } else {
+        format!(
+            "{}. {}({}) 得分{:.0} 相对{:+.1}%",
+            rank, i.name, code, i.score, i.rs
+        )
+    }
+}
+
+/// 系统通知 / 列表摘要：多行纯文本（App 结构化列表另读 payload）。
 fn format_body(r: &IntradayAlertResult) -> String {
-    let head: Vec<String> = r
-        .items
-        .iter()
-        .take(5)
-        .map(|i| format!("{} {:.0} RS={:+.1}%", i.symbol, i.score, i.rs))
-        .collect();
-    format!(
-        "大盘等权 {:+.2}% · {}",
-        r.r_mkt,
-        head.join("；")
-    )
+    let mut lines = vec![format!("大盘等权 {:+.2}%", r.r_mkt)];
+    for (idx, item) in r.items.iter().take(5).enumerate() {
+        lines.push(format_item_line(idx + 1, item));
+    }
+    if r.items.len() > 5 {
+        lines.push(format!("…共 {} 只，打开 App 查看全部", r.items.len()));
+    }
+    lines.join("\n")
+}
+
+async fn enrich_names(
+    db: &DatabaseConnection,
+    result: &mut IntradayAlertResult,
+) -> anyhow::Result<()> {
+    let symbols: Vec<String> = result.items.iter().map(|i| i.symbol.clone()).collect();
+    match data_source::load_stock_names(db, &symbols).await {
+        Ok(map) => {
+            for item in &mut result.items {
+                if let Some(n) = map.get(&item.symbol) {
+                    item.name = n.clone();
+                }
+            }
+        }
+        Err(e) => {
+            warn!("加载股票简称失败（仍推送代码）: {e}");
+        }
+    }
+    Ok(())
 }
 
 async fn ensure_system_condition(db: &DatabaseConnection) -> anyhow::Result<i64> {
@@ -139,7 +172,7 @@ async fn ensure_system_condition(db: &DatabaseConnection) -> anyhow::Result<i64>
     {
         return Ok(m.id);
     }
-    let now = Utc::now().to_rfc3339();
+    let now = session::shanghai_now_rfc3339();
     let active = condition::ActiveModel {
         name: Set(SYSTEM_NAME.into()),
         kind: Set(SYSTEM_KIND.into()),
@@ -161,5 +194,7 @@ pub async fn compute_now(
     cache: &RealtimeDayCache,
 ) -> anyhow::Result<IntradayAlertResult> {
     let input = data_source::load_market_window_hybrid(db, 6, miana, cache).await?;
-    Ok(calculate_intraday_alerts(&input))
+    let mut result = calculate_intraday_alerts(&input);
+    enrich_names(db, &mut result).await?;
+    Ok(result)
 }

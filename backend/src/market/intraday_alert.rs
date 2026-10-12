@@ -28,6 +28,9 @@ pub struct AlertLayers {
 #[derive(Debug, Clone, Serialize)]
 pub struct AlertItem {
     pub symbol: String,
+    /// ???????????????????????
+    #[serde(default)]
+    pub name: String,
     pub score: f64,
     pub rs: f64,
     pub change_pct: f64,
@@ -304,6 +307,7 @@ pub fn calculate_intraday_alerts(input: &MarketDataInput) -> IntradayAlertResult
         let score = W_A * a + W_B * b + W_C * c;
         scored.push(AlertItem {
             symbol: s.symbol.clone(),
+            name: String::new(),
             score,
             rs,
             change_pct: s.change_pct,
