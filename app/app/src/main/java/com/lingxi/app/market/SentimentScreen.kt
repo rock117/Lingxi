@@ -175,14 +175,14 @@ private fun SentimentContent(msi: MsiResult?, mtt: MttResult?) {
         if (today != null) {
             SectionTitle("今日三层")
             Text(
-                "仅用当日截面 · 点击一层查看因子",
+                "只用当日盘面。方向：站哪边；强度：方向×波动幅度；约束：收在当日高低何处（高分偏强，非扣分）。点击一层看因子。",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
             ExpandableMsiLayer(
                 title = "方向",
-                subtitle = "宽度 · 资金 · 结构 · 约占一半",
+                subtitle = "市场站哪边 · 约占今日一半",
                 score = today.layers.direction,
                 summary = layerSummary(MsiLayerKind.Direction, today.layers.direction),
                 factors = directionFactors(today.components, today.diagnostics),
@@ -193,10 +193,10 @@ private fun SentimentContent(msi: MsiResult?, mtt: MttResult?) {
             )
             ExpandableMsiLayer(
                 title = "强度",
-                subtitle = "涨跌停压力 · 约占四分之一",
+                subtitle = "涨跌有多用力（宽度×幅度）· 约占四分之一",
                 score = today.layers.intensity,
                 summary = layerSummary(MsiLayerKind.Intensity, today.layers.intensity),
-                factors = intensityFactors(today.components),
+                factors = intensityFactors(today.components, today.diagnostics),
                 expanded = expanded == MsiLayerKind.Intensity,
                 onToggle = {
                     expanded = if (expanded == MsiLayerKind.Intensity) null else MsiLayerKind.Intensity
@@ -204,7 +204,7 @@ private fun SentimentContent(msi: MsiResult?, mtt: MttResult?) {
             )
             ExpandableMsiLayer(
                 title = "约束",
-                subtitle = "日内收盘位置 · 约占四分之一",
+                subtitle = "收在当日高低何处 · 约占四分之一",
                 score = today.layers.constraint,
                 summary = layerSummary(MsiLayerKind.Constraint, today.layers.constraint),
                 factors = constraintFactors(today.components),
@@ -404,20 +404,22 @@ private fun layerSummary(kind: MsiLayerKind, score: Double): String {
     val degree = scoreDegreeLabel(score)
     return when (kind) {
         MsiLayerKind.Direction -> when {
-            score > 65 -> "宽度、资金、结构多数偏多。$degree。"
-            score < 35 -> "宽度、资金、结构多数偏空。$degree。"
-            score >= 60 -> "略偏多头一侧，尚未确认。$degree。"
-            score <= 40 -> "略偏空头一侧，尚未确认。$degree。"
-            else -> "多空维度互相抵消。$degree。"
+            score > 65 -> "家数、资金、结构多数同向偏多。$degree。"
+            score < 35 -> "家数、资金、结构多数同向偏空。$degree。"
+            score >= 60 -> "略偏多头一侧，尚未形成一致确认。$degree。"
+            score <= 40 -> "略偏空头一侧，尚未形成一致确认。$degree。"
+            else -> "多空维度互相抵消或信息不足。$degree。"
         }
         MsiLayerKind.Intensity -> when {
-            score > 65 -> "疑似涨停相对跌停占优。$degree。"
-            score < 35 -> "疑似跌停相对涨停占优。$degree。"
-            else -> "涨跌停压力大致均衡。$degree。"
+            score > 65 -> "上涨侧占优且波动偏大，打得偏用力。$degree。"
+            score < 35 -> "下跌侧占优且波动偏大，打得偏用力（偏空）。$degree。"
+            score >= 60 -> "略偏多头用力，尚未极端。$degree。"
+            score <= 40 -> "略偏空头用力，尚未极端。$degree。"
+            else -> "方向不清晰，或波动偏小、力度不足。$degree。"
         }
         MsiLayerKind.Constraint -> when {
-            score > 65 -> "多数票收在当日偏高位。$degree。"
-            score < 35 -> "多数票收在当日偏低位。$degree。"
+            score > 65 -> "多数票收在当日偏高位（收得强；高分不是风险扣分）。$degree。"
+            score < 35 -> "多数票收在当日偏低位（收得弱）。$degree。"
             else -> "日内收盘位置接近中性。$degree。"
         }
     }
@@ -450,11 +452,12 @@ private fun directionFactors(c: MsiComponents, d: MsiDiagnostics): List<FactorRo
     ),
 )
 
-private fun intensityFactors(c: MsiComponents): List<FactorRow> = listOf(
+private fun intensityFactors(c: MsiComponents, d: MsiDiagnostics): List<FactorRow> = listOf(
     FactorRow(
-        name = "涨跌停压",
-        score = c.limitPressure,
-        meaning = "疑似涨停相对跌停的拥挤压力（启发式阈值，非官方涨跌停）",
+        name = "有方向波动",
+        score = c.directedMove,
+        meaning = "涨跌宽度 × 等权均绝对涨跌幅；跌得多且跌得深会压低分数",
+        detail = "均绝对涨跌 ${"%.2f".format(d.meanAbsRet)}%",
     ),
 )
 

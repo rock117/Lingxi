@@ -46,7 +46,7 @@ data class MsiComponents(
     val breadth: Double,
     @SerialName("money_flow") val moneyFlow: Double,
     val structure: Double,
-    @SerialName("limit_pressure") val limitPressure: Double,
+    @SerialName("directed_move") val directedMove: Double,
     @SerialName("intraday_position") val intradayPosition: Double,
 )
 
@@ -72,4 +72,6 @@ data class MsiDiagnostics(
     @SerialName("breadth_raw") val breadthRaw: Double = 0.0,
     @SerialName("money_flow_raw") val moneyFlowRaw: Double = 0.0,
     @SerialName("structure_raw") val structureRaw: Double = 0.0,
+    @SerialName("mean_abs_ret") val meanAbsRet: Double = 0.0,
+    @SerialName("directed_move_raw") val directedMoveRaw: Double = 0.0,
 )

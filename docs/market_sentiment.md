@@ -44,11 +44,13 @@ msi_daily = W_DIRECTION * Direction
           + W_CONSTRAINT * Constraint
 ```
 
-| 层 | 权重 | 内部分量（**全部仅用当日**） |
-|---|---|---|
-| Direction | `0.50` | breadth, money_flow, structure（三分量等权 `1/3`） |
-| Intensity | `0.25` | limit_pressure（仅此一项） |
-| Constraint | `0.25` | intraday_position（仅此一项） |
+| 层 | 权重 | 回答什么 | 内部分量（**全部仅用当日**） |
+|---|---|---|---|
+| **Direction（方向）** | `0.50` | 市场站哪边 | breadth, money_flow, structure（三分量等权 `1/3`） |
+| **Intensity（强度）** | `0.25` | 打得有多用力（方向一致性 × 波动幅度） | directed_move（仅此一项） |
+| **Constraint（约束）** | `0.25` | 收在当日高低点何处 | intraday_position（仅此一项） |
+
+**极性**：Constraint 高分表示收盘偏强（靠近当日最高），不是风险扣分。
 
 **明确不进入单日情绪**：开盘缺口、新高新低、N 日区间位置、涨跌惯性、相对窗口量能比（均需跨日数据）。
 
@@ -85,6 +87,7 @@ map(x) = 50 + 50 * clamp(x, -1, 1)
 | `W_DIR` | `1/3` | Direction 内 breadth / money_flow / structure 等权 |
 | `EWMA_ALPHA` | `0.45` | 近 N 日日分加权的近端权重 |
 | `RET_SCALE` | `2.0` | 结构因子：等权均涨跌幅（百分点）/`RET_SCALE` 后再 `tanh` |
+| `AMP_SCALE` | `2.0` | 强度因子：等权均绝对涨跌幅（百分点）/`AMP_SCALE` 后再 `tanh` |
 | `MSI_HIGH` / `MSI_LOW` | `65` / `35` | 多/空确认 |
 | `MSI_GREY_BULL_*` | `60` / `65` | 多头灰区（含端点） |
 | `MSI_GREY_BEAR_*` | `35` / `40` | 空头灰区（含端点） |
@@ -199,15 +202,22 @@ structure_raw = clamp(majority * tanh(mean_ret / RET_SCALE), -1, 1)
 structure_score = map(structure_raw)
 ```
 
-### 5.4 涨跌停压 `limit_pressure_score`（= Intensity）
+### 5.4 有方向波动 `directed_move_score`（= Intensity）
+
+**含义**：涨跌家数方向 × 全市场等权平均绝对涨跌幅。大面下跌且跌得深 → 强度分偏低；上涨且涨得狠 → 偏高。波动很小的一边倒接近中性。
+
+涨跌停家数**不进入**强度层（仅诊断 / 信号辅助）。
 
 ```
-limit_up   = count(change_pct >=  LIMIT_PCT)
-limit_down = count(change_pct <= -LIMIT_PCT)
-limit_raw  = clamp( (limit_up - limit_down) / max(n, 1), -1, 1 )
-limit_pressure_score = map(limit_raw)
-Intensity = limit_pressure_score
+breadth_raw = §5.1 的宽度原始量
+mean_abs_ret = mean( |change_pct| of all valid stocks )   # 百分点，等权
+amp = tanh( mean_abs_ret / AMP_SCALE )                    # ∈ (0, 1)
+directed_move_raw = clamp( breadth_raw * amp, -1, 1 )
+directed_move_score = map(directed_move_raw)
+Intensity = directed_move_score
 ```
+
+空样本：`Intensity = 50`，`mean_abs_ret = 0`。
 
 ### 5.5 日内位置 `intraday_position_score`（= Constraint）
 
@@ -266,7 +276,15 @@ recent.series = series
 
 ## 7. 信号（基于当日）
 
-仅用 `today.value`、当日 `limit_pressure` 原始倾向、`intraday_raw`。
+仅用 `today.value`、当日涨跌停计数（诊断用）、`intraday_raw`。
+
+诊断仍统计：
+
+```
+limit_up   = count(change_pct >=  LIMIT_PCT)
+limit_down = count(change_pct <= -LIMIT_PCT)
+limit_balance = (limit_up - limit_down) / max(limit_up + limit_down, 1)   # 两边皆 0 → 0
+```
 
 ### 7.1 布尔量
 
@@ -276,8 +294,8 @@ msi_bear = today.value < MSI_LOW
 msi_grey = today.value ∈ [60,65] or ∈ [35,40]
 intra_high = intraday_raw >= INTRA_HIGH
 intra_low  = intraday_raw <  INTRA_LOW
-limit_bull = limit_raw > 0.05
-limit_bear = limit_raw < -0.05
+limit_bull = limit_balance > 0.05
+limit_bear = limit_balance < -0.05
 ```
 
 ### 7.2 `PriceStatus`（由日内位置）
@@ -339,7 +357,7 @@ GET /api/market/sentiment?days=5
 | `date` | 交易日 |
 | `value` | 当日 MSI |
 | `layers` | direction / intensity / constraint |
-| `components.breadth` / `money_flow` / `structure` / `limit_pressure` / `intraday_position` | 当日分量 |
+| `components.breadth` / `money_flow` / `structure` / `directed_move` / `intraday_position` | 当日分量 |
 | `signal` | §7 |
 | `diagnostics` | 当日涨跌家数等 |
 
@@ -361,7 +379,7 @@ GET /api/market/sentiment?days=5
       "breadth": 66.0,
       "money_flow": 63.0,
       "structure": 63.0,
-      "limit_pressure": 58.0,
+      "directed_move": 58.0,
       "intraday_position": 61.0
     },
     "signal": {

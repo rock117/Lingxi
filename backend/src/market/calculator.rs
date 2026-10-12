@@ -9,6 +9,7 @@ use super::domain::*;
 
 const EWMA_ALPHA: f64 = 0.45;
 const RET_SCALE: f64 = 2.0;
+const AMP_SCALE: f64 = 2.0;
 
 const W_DIRECTION: f64 = 0.50;
 const W_INTENSITY: f64 = 0.25;
@@ -127,8 +128,8 @@ fn daily_structure_raw(stocks: &[StockDailyData], breadth_raw: f64) -> f64 {
     (breadth_raw * ret_sig).clamp(-1.0, 1.0)
 }
 
-fn daily_limit_raw(stocks: &[StockDailyData]) -> (f64, usize, usize) {
-    let n = stocks.len().max(1);
+/// 涨跌停计数 + 在「已涨跌停」集合内的多空差（信号辅助；不进强度层）。
+fn daily_limit_stats(stocks: &[StockDailyData]) -> (f64, usize, usize) {
     let limit_up = stocks
         .iter()
         .filter(|s| s.change_pct >= LIMIT_PCT)
@@ -137,8 +138,25 @@ fn daily_limit_raw(stocks: &[StockDailyData]) -> (f64, usize, usize) {
         .iter()
         .filter(|s| s.change_pct <= -LIMIT_PCT)
         .count();
-    let raw = ((limit_up as f64 - limit_down as f64) / n as f64).clamp(-1.0, 1.0);
-    (raw, limit_up, limit_down)
+    let denom = (limit_up + limit_down).max(1) as f64;
+    let balance = (limit_up as f64 - limit_down as f64) / denom;
+    (balance, limit_up, limit_down)
+}
+
+/// 有方向波动：宽度 × 等权均绝对涨跌幅（规范 §5.4）。
+fn daily_directed_move_raw(stocks: &[StockDailyData], breadth_raw: f64) -> (f64, f64) {
+    if stocks.is_empty() {
+        return (0.0, 0.0);
+    }
+    let mean_abs_ret = mean(
+        &stocks
+            .iter()
+            .map(|s| s.change_pct.abs())
+            .collect::<Vec<_>>(),
+    );
+    let amp = (mean_abs_ret / AMP_SCALE).tanh();
+    let raw = (breadth_raw * amp).clamp(-1.0, 1.0);
+    (raw, mean_abs_ret)
 }
 
 fn daily_intraday_raw(stocks: &[StockDailyData]) -> f64 {
@@ -168,17 +186,18 @@ pub fn calculate_msi_daily(snap: &MarketDailySnapshot) -> MsiDayResult {
     let breadth_raw = daily_breadth_raw(stocks);
     let money_raw = daily_money_flow_raw(stocks);
     let structure_raw = daily_structure_raw(stocks, breadth_raw);
-    let (limit_raw, limit_up, limit_down) = daily_limit_raw(stocks);
+    let (directed_raw, mean_abs_ret) = daily_directed_move_raw(stocks, breadth_raw);
+    let (limit_balance, limit_up, limit_down) = daily_limit_stats(stocks);
     let intraday_raw = daily_intraday_raw(stocks);
 
     let breadth = map_to_score(breadth_raw);
     let money_flow = map_to_score(money_raw);
     let structure = map_to_score(structure_raw);
-    let limit_pressure = map_to_score(limit_raw);
+    let directed_move = map_to_score(directed_raw);
     let intraday_position = intraday_raw * 100.0;
 
     let direction = W_DIR * (breadth + money_flow + structure);
-    let intensity = limit_pressure;
+    let intensity = directed_move;
     let constraint = intraday_position;
     let value = W_DIRECTION * direction + W_INTENSITY * intensity + W_CONSTRAINT * constraint;
 
@@ -195,7 +214,7 @@ pub fn calculate_msi_daily(snap: &MarketDailySnapshot) -> MsiDayResult {
         }
     }
 
-    let signal = build_signal(value, limit_raw, intraday_raw);
+    let signal = build_signal(value, limit_balance, intraday_raw);
 
     MsiDayResult {
         date: snap.date.clone(),
@@ -209,7 +228,7 @@ pub fn calculate_msi_daily(snap: &MarketDailySnapshot) -> MsiDayResult {
             breadth,
             money_flow,
             structure,
-            limit_pressure,
+            directed_move,
             intraday_position,
         },
         signal,
@@ -223,6 +242,8 @@ pub fn calculate_msi_daily(snap: &MarketDailySnapshot) -> MsiDayResult {
             breadth_raw,
             money_flow_raw: money_raw,
             structure_raw,
+            mean_abs_ret,
+            directed_move_raw: directed_raw,
         },
     }
 }
@@ -240,7 +261,7 @@ fn neutral_day(date: &str) -> MsiDayResult {
             breadth: 50.0,
             money_flow: 50.0,
             structure: 50.0,
-            limit_pressure: 50.0,
+            directed_move: 50.0,
             intraday_position: 50.0,
         },
         signal: build_signal(50.0, 0.0, 0.5),
@@ -254,19 +275,21 @@ fn neutral_day(date: &str) -> MsiDayResult {
             breadth_raw: 0.0,
             money_flow_raw: 0.0,
             structure_raw: 0.0,
+            mean_abs_ret: 0.0,
+            directed_move_raw: 0.0,
         },
     }
 }
 
-fn classify_signal(value: f64, limit_raw: f64, intraday_raw: f64) -> SignalType {
+fn classify_signal(value: f64, limit_balance: f64, intraday_raw: f64) -> SignalType {
     let msi_bull = value > MSI_HIGH;
     let msi_bear = value < MSI_LOW;
     let msi_grey = (MSI_GREY_BULL_LO..=MSI_GREY_BULL_HI).contains(&value)
         || (MSI_GREY_BEAR_LO..=MSI_GREY_BEAR_HI).contains(&value);
     let intra_high = intraday_raw >= INTRA_HIGH;
     let intra_low = intraday_raw < INTRA_LOW;
-    let limit_bull = limit_raw > 0.05;
-    let limit_bear = limit_raw < -0.05;
+    let limit_bull = limit_balance > 0.05;
+    let limit_bear = limit_balance < -0.05;
 
     if msi_grey {
         return SignalType::Neutral;
@@ -292,8 +315,8 @@ fn classify_signal(value: f64, limit_raw: f64, intraday_raw: f64) -> SignalType 
     SignalType::Neutral
 }
 
-fn build_signal(value: f64, limit_raw: f64, intraday_raw: f64) -> MsiSignal {
-    let signal_type = classify_signal(value, limit_raw, intraday_raw);
+fn build_signal(value: f64, limit_balance: f64, intraday_raw: f64) -> MsiSignal {
+    let signal_type = classify_signal(value, limit_balance, intraday_raw);
     MsiSignal {
         label: signal_type.label().to_string(),
         advice: signal_type.advice().to_string(),
@@ -428,6 +451,34 @@ mod tests {
         );
         let r = calculate_msi_daily(&s);
         assert!(r.value < 40.0, "全日下跌 today 应偏低, 实际 {}", r.value);
+        assert!(
+            r.layers.intensity < 45.0,
+            "大面下跌且有幅度时强度应明显 < 50, 实际 {}",
+            r.layers.intensity
+        );
+        assert!((r.components.directed_move - r.layers.intensity).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_directed_move_uses_abs_ret() {
+        // 宽度相同（全跌），幅度更大 → 强度分更低
+        let mild = snap(
+            "2026-01-01",
+            vec![
+                bar("A", -0.3, 100.0, 10.0, 10.0, 9.9, 9.95),
+                bar("B", -0.3, 100.0, 10.0, 10.0, 9.9, 9.95),
+            ],
+        );
+        let harsh = snap(
+            "2026-01-01",
+            vec![
+                bar("A", -3.0, 100.0, 10.0, 10.0, 9.5, 9.6),
+                bar("B", -3.0, 100.0, 10.0, 10.0, 9.5, 9.6),
+            ],
+        );
+        let a = calculate_msi_daily(&mild).layers.intensity;
+        let b = calculate_msi_daily(&harsh).layers.intensity;
+        assert!(b < a, "跌幅更大应强度更低: mild={}, harsh={}", a, b);
     }
 
     #[test]

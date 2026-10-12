@@ -40,7 +40,8 @@ pub struct MsiComponents {
     pub breadth: f64,
     pub money_flow: f64,
     pub structure: f64,
-    pub limit_pressure: f64,
+    /// 有方向波动（强度层）
+    pub directed_move: f64,
     pub intraday_position: f64,
 }
 
@@ -55,6 +56,8 @@ pub struct MsiDiagnostics {
     pub breadth_raw: f64,
     pub money_flow_raw: f64,
     pub structure_raw: f64,
+    pub mean_abs_ret: f64,
+    pub directed_move_raw: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
