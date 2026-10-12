@@ -5,7 +5,7 @@
 //! - `sc_stock_kline_d1_bfq`
 //! - `sc_trade_calendar`（最近 N 个交易日，避免对 K 线表 DISTINCT）
 //!
-//! 仅 MSI：盘中（上海时区周一至周五 09:30–18:00）最新交易日改用 Miana 实时行情覆盖。
+//! 仅「当日 + 连续竞价时段」用 Miana 覆盖最新交易日；其余一律读库。
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Mutex, OnceLock};
@@ -175,7 +175,7 @@ async fn trade_calendar_has_rows(db: &DatabaseConnection) -> Result<bool, DbErr>
     Ok(row.is_some())
 }
 
-/// 加载窗口；若处于盘中实时窗口，用 Miana 覆盖/补齐最新交易日。
+/// 加载窗口；周一至周五连续竞价时段用 Miana 覆盖当日，其余读库。
 pub async fn load_market_window_hybrid(
     db: &DatabaseConnection,
     days: usize,
@@ -186,6 +186,7 @@ pub async fn load_market_window_hybrid(
         .await
         .map_err(AppError::from)?;
 
+    // 交易日：简单按上海周一至周五 + 竞价时段（不查 sc_trade_calendar）
     if !session::is_realtime_session_now() {
         return Ok(input);
     }
@@ -201,7 +202,7 @@ pub async fn load_market_window_hybrid(
     tracing::info!(
         date = %today,
         symbols = symbols.len(),
-        "盘中窗口：最新交易日改用 Miana 实时行情"
+        "工作日竞价时段：当日截面改用 Miana 实时行情"
     );
 
     let stocks = cache.get_or_fetch(miana, &symbols, &today).await?;

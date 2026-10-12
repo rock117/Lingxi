@@ -23,10 +23,10 @@
 |---|---|
 | 间隔 | 300 秒 |
 | 时段（上海） | 工作日 `09:35–11:30`、`13:05–14:55` |
-| 数据 | `load_market_window_hybrid(db, 6, …)`：近 5 个已收盘日 + 当日实时 |
+| 数据 | `load_market_window_hybrid(db, 6, …)`：近 5 个已收盘日；**仅交易日连续竞价时段**叠加当日 Miana |
 | 通道 | `PushMessage { type: "notification", data: NotificationItem }` |
 
-非推送时段跳过；无 `MIANA_TOKEN` 或样本为空时打日志并跳过。
+非推送时段跳过。实时仅周一至周五竞价时段（不查节假日日历）。无 `MIANA_TOKEN` 或样本为空时打日志并跳过。
 
 ---
 

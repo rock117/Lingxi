@@ -1,0 +1,23 @@
+[Unit]
+Description=Lingxi Backend
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/rock/apps/lingxi
+Environment=HOST=0.0.0.0
+Environment=PORT=8000
+Environment=DATABASE_URL=postgres://lingxi:lingxi@127.0.0.1:5432/lingxi
+Environment=MIANA_BASE_URL=https://miana.com.cn
+Environment=MIANA_TOKEN=8d6daacca90c1b242f3100b756f914de
+Environment=MIANA_RATE_LIMIT_PER_MIN=480
+Environment=MIANA_REALTIME_CACHE_SECS=120
+Environment=LOG_DIR=/home/rock/apps/lingxi/log
+Environment=LOG_MAX_BYTES=10485760
+Environment=RUST_LOG=info,sqlx=warn,sqlx::query=warn
+ExecStart=/home/rock/apps/lingxi/lingxi-backend
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
