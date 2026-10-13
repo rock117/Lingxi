@@ -265,7 +265,8 @@ recent.series = series
 
 1. 从库加载最近 `N` 个开市日全市场日 K（`sc_trade_calendar WHERE is_open = TRUE`）。  
 2. 若处于盘中实时窗：用 Miana 实时覆盖/追加 **最新日** 截面（规则同既有 hybrid）。  
-3. 对装载结果调用 `calculate_msi`，**不落库**。
+3. 对装载结果调用 `calculate_msi`。  
+4. **缓存**：开市日连续竞价窗内每次重算，结果按当日 `date`（`yyyy-MM-dd`）写入进程内存 + 表 `msi_cache`（`payload` JSONB，不区分 `days`）。非交易时段取 `date` 最近一条返回；重启后可从库恢复。无缓存时（首次）计算一次并落库。
 
 ---
 
@@ -333,7 +334,8 @@ GET /api/market/sentiment?days=5
 | `days` | 近 N 日窗口，默认 `5`，`clamp` 到 `[3, 30]` |
 
 数据源：`sc_stock` + `sc_stock_kline_d1_bfq`；开市日来自 `sc_trade_calendar`（`is_open` / `pre_trade_date`，与 Tushare `trade_cal` 一致）。  
-交易日连续竞价当日：Miana `/api/stock/v3/realtime`（MSI / 日内推送）。  
+交易日连续竞价当日：Miana `/api/stock/v3/realtime`（MSI / 日内推送）；结果缓存见 §6.3。  
+
 ### 8.1 响应
 
 | 字段 | 含义 |

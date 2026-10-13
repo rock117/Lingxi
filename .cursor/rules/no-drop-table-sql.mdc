@@ -1,0 +1,11 @@
+---
+description: SQL migrations must never use DROP TABLE
+globs: "**/*.sql"
+alwaysApply: false
+---
+
+# No DROP TABLE in SQL
+
+- Never write `DROP TABLE` (including `DROP TABLE IF EXISTS`) in project SQL / migrations.
+- Prefer `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, and similar additive changes.
+- If schema must be rebuilt, leave it to the operator to do manually; do not automate destructive drops in SQL files.

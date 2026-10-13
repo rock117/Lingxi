@@ -19,8 +19,23 @@ use super::intraday_alert::IntradayAlertResult;
 use super::intraday_push;
 use super::mid_term;
 use super::miana::MianaClient;
+use super::msi_cache;
 use super::realtime_cache::RealtimeDayCache;
 use super::session;
+
+/// 开市日 + 连续竞价时钟窗：重新计算 MSI；否则复用上次结果。
+async fn should_refresh_msi(db: &DatabaseConnection) -> bool {
+    if !session::is_realtime_session_now() {
+        return false;
+    }
+    match data_source::is_open_trade_day(db, session::shanghai_today_naive()).await {
+        Ok(open) => open,
+        Err(e) => {
+            tracing::warn!(error = %e, "查询 is_open 失败，按非交易时段处理（复用缓存）");
+            false
+        }
+    }
+}
 
 /// MTT 需要至少 MA60 + 斜率回看，默认取最近 70 个交易日。
 const MTT_LOOKBACK_DAYS: usize = 70;
@@ -76,18 +91,33 @@ pub async fn sentiment(
     days: Option<usize>,
 ) -> AppResult<Json<MsiResult>> {
     let days = days.unwrap_or(5).clamp(3, 30);
+    let refresh = should_refresh_msi(db.inner()).await;
+
+    if !refresh {
+        if let Some(cached) = msi_cache::get_latest(db.inner()).await? {
+            tracing::info!(
+                calculated_at = %cached.calculated_at,
+                "非交易时段：返回最近一条缓存 MSI"
+            );
+            return Ok(Json(cached));
+        }
+        tracing::info!("非交易时段无缓存，计算一次并落库");
+    }
 
     let input = load_msi_input(db.inner(), days, miana.inner(), cache.inner()).await?;
     let result = calculator::calculate_msi(&input);
+    let trade_date = session::shanghai_today();
+    msi_cache::store(db.inner(), &trade_date, &result).await?;
 
     tracing::info!(
-        "市场情绪: today={:.1} recent={:.1} dir={:.1} int={:.1} con={:.1} signal={}",
+        "市场情绪: today={:.1} recent={:.1} dir={:.1} int={:.1} con={:.1} signal={} refresh={}",
         result.today.value,
         result.recent.value,
         result.today.layers.direction,
         result.today.layers.intensity,
         result.today.layers.constraint,
         result.today.signal.label,
+        refresh,
     );
 
     Ok(Json(result))
