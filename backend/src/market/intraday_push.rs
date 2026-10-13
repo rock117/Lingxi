@@ -1,4 +1,5 @@
-//! 交易时段每 5 分钟计算日内强势 Top10，经 WebSocket 推送并落库。
+//! 开市日竞价窗内每 5 分钟计算日内强势 Top10，经 WebSocket 推送并落库；
+//! 非交易时段推送 `market_result_cache` 中该 kind 最近一条。
 
 use chrono::{Timelike, Utc};
 use entity::{condition, notification};
@@ -10,6 +11,7 @@ use super::data_source;
 use super::intraday_alert::{calculate_intraday_alerts, IntradayAlertResult};
 use super::miana::MianaClient;
 use super::realtime_cache::RealtimeDayCache;
+use super::result_cache;
 use super::session;
 use crate::ws::hub::{Hub, PushMessage};
 
@@ -17,7 +19,7 @@ const INTERVAL_SECS: u64 = 300;
 const SYSTEM_KIND: &str = "intraday_alert";
 const SYSTEM_NAME: &str = "日内强势股";
 
-/// 启动后台任务：每 5 分钟一轮（暂不限制交易时段，便于联调）。
+/// 启动后台任务：每 5 分钟一轮。
 pub fn spawn(
     db: DatabaseConnection,
     hub: Hub,
@@ -25,17 +27,11 @@ pub fn spawn(
     cache: RealtimeDayCache,
 ) {
     tokio::spawn(async move {
-        // 先对齐到下一整 5 分钟边界附近再开始固定间隔
         sleep_until_next_slot().await;
         let mut ticker = tokio::time::interval(Duration::from_secs(INTERVAL_SECS));
         ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
             ticker.tick().await;
-            // 竞价时段才需要 Miana；其余时间读库，无 token 也可推
-            if session::is_realtime_session_now() && !miana.token_configured() {
-                warn!("跳过日内推送：竞价时段未配置 MIANA_TOKEN");
-                continue;
-            }
             match run_once(&db, &hub, &miana, &cache).await {
                 Ok(Some(r)) => info!(
                     date = %r.date,
@@ -43,13 +39,13 @@ pub fn spawn(
                     r_mkt = format!("{:.2}", r.r_mkt),
                     "日内强势 Top 已推送"
                 ),
-                Ok(None) => info!("日内推送：本轮无达标标的，跳过广播"),
+                Ok(None) => info!("日内推送：本轮无数据可推，跳过广播"),
                 Err(e) => warn!("日内推送失败: {e:#}"),
             }
         }
     });
     info!(
-        "日内强势推送已启动：间隔 {}s（暂不限制时段）",
+        "日内强势推送已启动：间隔 {}s（开市竞价重算落库，非交易时段推缓存）",
         INTERVAL_SECS
     );
 }
@@ -70,17 +66,67 @@ async fn run_once(
     miana: &MianaClient,
     cache: &RealtimeDayCache,
 ) -> anyhow::Result<Option<IntradayAlertResult>> {
+    let refresh = data_source::is_open_auction_session(db).await;
+
+    let result = if refresh {
+        if !miana.token_configured() {
+            warn!("跳过日内推送：开市竞价时段未配置 MIANA_TOKEN");
+            return Ok(None);
+        }
+        let computed = compute_alert(db, miana, cache).await?;
+        if computed.items.is_empty() {
+            return Ok(None);
+        }
+        let now = session::shanghai_now_rfc3339();
+        let trade_date = session::shanghai_today();
+        result_cache::store_intraday(db, &trade_date, &computed, &now)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        computed
+    } else if let Some(cached) = result_cache::get_latest_intraday(db)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+    {
+        info!(date = %cached.date, "非交易时段：推送最近一条缓存强势股");
+        cached
+    } else {
+        info!("非交易时段无缓存，计算一次并落库");
+        let computed = compute_alert(db, miana, cache).await?;
+        if computed.items.is_empty() {
+            return Ok(None);
+        }
+        let now = session::shanghai_now_rfc3339();
+        let trade_date = session::shanghai_today();
+        result_cache::store_intraday(db, &trade_date, &computed, &now)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        computed
+    };
+
+    push_notification(db, hub, &result).await?;
+    Ok(Some(result))
+}
+
+async fn compute_alert(
+    db: &DatabaseConnection,
+    miana: &MianaClient,
+    cache: &RealtimeDayCache,
+) -> anyhow::Result<IntradayAlertResult> {
     let input = data_source::load_market_window_hybrid(db, 6, miana, cache).await?;
     let mut result = calculate_intraday_alerts(&input);
-    if result.items.is_empty() {
-        return Ok(None);
-    }
     enrich_names(db, &mut result).await?;
+    Ok(result)
+}
 
+async fn push_notification(
+    db: &DatabaseConnection,
+    hub: &Hub,
+    result: &IntradayAlertResult,
+) -> anyhow::Result<()> {
     let cond_id = ensure_system_condition(db).await?;
     let now = session::shanghai_now_rfc3339();
     let title = format!("日内强势 Top{}", result.items.len());
-    let body = format_body(&result);
+    let body = format_body(result);
     let payload_val = serde_json::json!({
         "kind": SYSTEM_KIND,
         "date": result.date,
@@ -113,7 +159,7 @@ async fn run_once(
         "created_at": now,
     });
     hub.broadcast(PushMessage::notification(push_data));
-    Ok(Some(result))
+    Ok(())
 }
 
 fn short_code(symbol: &str) -> &str {
@@ -132,7 +178,6 @@ fn format_item_line(rank: usize, i: &super::intraday_alert::AlertItem) -> String
     }
 }
 
-/// 系统通知 / 列表摘要：多行纯文本（App 结构化列表另读 payload）。
 fn format_body(r: &IntradayAlertResult) -> String {
     let mut lines = vec![format!("大盘等权 {:+.2}%", r.r_mkt)];
     for (idx, item) in r.items.iter().take(5).enumerate() {
@@ -193,8 +238,5 @@ pub async fn compute_now(
     miana: &MianaClient,
     cache: &RealtimeDayCache,
 ) -> anyhow::Result<IntradayAlertResult> {
-    let input = data_source::load_market_window_hybrid(db, 6, miana, cache).await?;
-    let mut result = calculate_intraday_alerts(&input);
-    enrich_names(db, &mut result).await?;
-    Ok(result)
+    compute_alert(db, miana, cache).await
 }

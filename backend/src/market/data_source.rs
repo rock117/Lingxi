@@ -130,6 +130,20 @@ INNER JOIN sc_stock s
     Ok(input)
 }
 
+/// 开市日且处于连续竞价时钟窗（MSI / 日内推送「应刷新」条件）。
+pub async fn is_open_auction_session(db: &DatabaseConnection) -> bool {
+    if !session::is_realtime_session_now() {
+        return false;
+    }
+    match is_open_trade_day(db, session::shanghai_today_naive()).await {
+        Ok(open) => open,
+        Err(e) => {
+            tracing::warn!(error = %e, "查询 is_open 失败，按非交易时段处理");
+            false
+        }
+    }
+}
+
 /// `sc_trade_calendar.is_open`：当日是否开市。
 pub async fn is_open_trade_day(db: &DatabaseConnection, day: NaiveDate) -> Result<bool, DbErr> {
     #[derive(Debug, FromQueryResult)]

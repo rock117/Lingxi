@@ -22,11 +22,12 @@
 | 项 | 值 |
 |---|---|
 | 间隔 | 300 秒 |
-| 时段 | **暂不限制**（联调阶段全天每 5 分钟推送） |
-| 数据 | `load_market_window_hybrid(db, 6, …)`：近 5 个开市日（`is_open`）；开市日竞价时段叠加当日 Miana，其余读库 |
+| 时段 | 开市日连续竞价窗内重算并落库；非交易时段推送缓存最新一条 |
+| 数据 | `load_market_window_hybrid(db, 6, …)`：近 5 个开市日（`is_open`）；开市日竞价时段叠加当日 Miana |
+| 缓存 | 表 `market_result_cache`（`kind=intraday_alert`，主键 `(kind, date)`，`payload` JSONB） |
 | 通道 | `PushMessage { type: "notification", data: NotificationItem }` |
 
-无 `MIANA_TOKEN` 或样本为空时打日志并跳过。
+开市竞价未配置 `MIANA_TOKEN`、或本轮无达标标的时打日志并跳过。
 
 ---
 

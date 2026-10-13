@@ -24,9 +24,12 @@ CREATE TABLE IF NOT EXISTS notification (
 CREATE INDEX IF NOT EXISTS idx_notification_created_at ON notification (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notification_read ON notification ("read");
 
--- MSI 计算结果缓存（按交易日；非交易时段取最近一条；重启后从库恢复）
-CREATE TABLE IF NOT EXISTS msi_cache (
-    date         TEXT PRIMARY KEY,
+-- 市场计算结果缓存（按 kind+交易日；非交易时段取该 kind 最近一条；重启后从库恢复）
+-- kind: msi | intraday_alert
+CREATE TABLE IF NOT EXISTS market_result_cache (
+    kind         TEXT NOT NULL,
+    date         TEXT NOT NULL,
     payload      JSONB NOT NULL,
-    updated_at   TEXT NOT NULL
+    updated_at   TEXT NOT NULL,
+    PRIMARY KEY (kind, date)
 );

@@ -13,7 +13,7 @@ pub mod intraday_alert;
 pub mod intraday_push;
 pub mod mid_term;
 pub mod miana;
-pub mod msi_cache;
+pub mod result_cache;
 pub mod rate_limit;
 pub mod realtime_cache;
 pub mod routes;

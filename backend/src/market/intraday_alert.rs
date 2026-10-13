@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::domain::{MarketDataInput, StockDailyData};
 
@@ -18,17 +18,17 @@ const SCORE_MIN: f64 = 55.0;
 const RS_CAP: f64 = 5.0;
 const EPS: f64 = 1e-10;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertLayers {
     pub a: f64,
     pub b: f64,
     pub c: f64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertItem {
     pub symbol: String,
-    /// ???????????????????????
+    /// 证券简称（推送前从 sc_stock 填充）
     #[serde(default)]
     pub name: String,
     pub score: f64,
@@ -39,7 +39,7 @@ pub struct AlertItem {
     pub reason: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntradayAlertResult {
     pub date: String,
     pub r_mkt: f64,
