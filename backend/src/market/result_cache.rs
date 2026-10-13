@@ -134,6 +134,8 @@ pub async fn store_msi(
     store_typed(db, KIND_MSI, date, result, &result.calculated_at).await
 }
 
+/// 读最近一条日内强势缓存（盘中写入；休市推送已关闭，供排查/后续接口使用）。
+#[allow(dead_code)]
 pub async fn get_latest_intraday(
     db: &DatabaseConnection,
 ) -> AppResult<Option<IntradayAlertResult>> {

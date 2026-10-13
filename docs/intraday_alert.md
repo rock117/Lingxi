@@ -22,12 +22,13 @@
 | 项 | 值 |
 |---|---|
 | 间隔 | 300 秒 |
-| 时段 | 开市日连续竞价窗内重算并落库；非交易时段推送缓存最新一条 |
-| 数据 | `load_market_window_hybrid(db, 6, …)`：近 5 个开市日（`is_open`）；开市日竞价时段叠加当日 Miana |
-| 缓存 | 表 `market_result_cache`（`kind=intraday_alert`，主键 `(kind, date)`，`payload` JSONB） |
+| 时段 | 仅开市日连续竞价窗内重算、落库并推送；非交易时段不推（避免重复刷屏） |
+| 数据 | `load_market_window_hybrid(db, 6, …)`：近 5 个开市日（`is_open` 且 ≤ 今日）；竞价时段叠加当日 Miana |
+| 缓存 | 表 `market_result_cache`（`kind=intraday_alert`，主键 `(kind, date)`，`payload` JSONB；盘中写入） |
 | 通道 | `PushMessage { type: "notification", data: NotificationItem }` |
 
-开市竞价未配置 `MIANA_TOKEN`、或本轮无达标标的时打日志并跳过。
+开市竞价未配置 `MIANA_TOKEN`、本轮无达标标的、或与上一条推送 `payload` 完全相同时打日志并跳过。  
+App 列表也会按内容指纹去重（同日相同 Top 截面只显示最新一条）。
 
 ---
 

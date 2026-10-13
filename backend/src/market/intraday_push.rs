@@ -1,9 +1,9 @@
 //! 开市日竞价窗内每 5 分钟计算日内强势 Top10，经 WebSocket 推送并落库；
-//! 非交易时段推送 `market_result_cache` 中该 kind 最近一条。
+//! 结果写入 `market_result_cache`；非交易时段不推送（避免重复刷屏）。
 
 use chrono::{Timelike, Utc};
 use entity::{condition, notification};
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set};
 use tokio::time::{Duration, Instant, MissedTickBehavior};
 use tracing::{info, warn};
 
@@ -45,7 +45,7 @@ pub fn spawn(
         }
     });
     info!(
-        "日内强势推送已启动：间隔 {}s（开市竞价重算落库，非交易时段推缓存）",
+        "日内强势推送已启动：间隔 {}s（仅开市竞价重算并推送）",
         INTERVAL_SECS
     );
 }
@@ -66,44 +66,29 @@ async fn run_once(
     miana: &MianaClient,
     cache: &RealtimeDayCache,
 ) -> anyhow::Result<Option<IntradayAlertResult>> {
-    let refresh = data_source::is_open_auction_session(db).await;
+    if !data_source::is_open_auction_session(db).await {
+        tracing::debug!("非交易时段：跳过日内强势推送");
+        return Ok(None);
+    }
+    if !miana.token_configured() {
+        warn!("跳过日内推送：开市竞价时段未配置 MIANA_TOKEN");
+        return Ok(None);
+    }
 
-    let result = if refresh {
-        if !miana.token_configured() {
-            warn!("跳过日内推送：开市竞价时段未配置 MIANA_TOKEN");
-            return Ok(None);
-        }
-        let computed = compute_alert(db, miana, cache).await?;
-        if computed.items.is_empty() {
-            return Ok(None);
-        }
-        let now = session::shanghai_now_rfc3339();
-        let trade_date = session::shanghai_today();
-        result_cache::store_intraday(db, &trade_date, &computed, &now)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        computed
-    } else if let Some(cached) = result_cache::get_latest_intraday(db)
+    let result = compute_alert(db, miana, cache).await?;
+    if result.items.is_empty() {
+        return Ok(None);
+    }
+
+    let now = session::shanghai_now_rfc3339();
+    let trade_date = session::shanghai_today();
+    result_cache::store_intraday(db, &trade_date, &result, &now)
         .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?
-    {
-        info!(date = %cached.date, "非交易时段：推送最近一条缓存强势股");
-        cached
-    } else {
-        info!("非交易时段无缓存，计算一次并落库");
-        let computed = compute_alert(db, miana, cache).await?;
-        if computed.items.is_empty() {
-            return Ok(None);
-        }
-        let now = session::shanghai_now_rfc3339();
-        let trade_date = session::shanghai_today();
-        result_cache::store_intraday(db, &trade_date, &computed, &now)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        computed
-    };
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    push_notification(db, hub, &result).await?;
+    if !push_notification(db, hub, &result).await? {
+        return Ok(None);
+    }
     Ok(Some(result))
 }
 
@@ -118,11 +103,12 @@ async fn compute_alert(
     Ok(result)
 }
 
+/// 落库并广播；与上一条相同则跳过，返回 `false`。
 async fn push_notification(
     db: &DatabaseConnection,
     hub: &Hub,
     result: &IntradayAlertResult,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let cond_id = ensure_system_condition(db).await?;
     let now = session::shanghai_now_rfc3339();
     let title = format!("日内强势 Top{}", result.items.len());
@@ -136,6 +122,11 @@ async fn push_notification(
         "items": result.items,
     });
     let payload_str = payload_val.to_string();
+
+    if latest_payload_eq(db, cond_id, &payload_str).await? {
+        info!(date = %result.date, "日内强势与上一条相同，跳过推送");
+        return Ok(false);
+    }
 
     let notif = notification::ActiveModel {
         condition_id: Set(cond_id),
@@ -159,7 +150,23 @@ async fn push_notification(
         "created_at": now,
     });
     hub.broadcast(PushMessage::notification(push_data));
-    Ok(())
+    Ok(true)
+}
+
+async fn latest_payload_eq(
+    db: &DatabaseConnection,
+    condition_id: i64,
+    payload: &str,
+) -> anyhow::Result<bool> {
+    let last = notification::Entity::find()
+        .filter(notification::Column::ConditionId.eq(condition_id))
+        .order_by_desc(notification::Column::Id)
+        .one(db)
+        .await?;
+    Ok(last
+        .and_then(|n| n.payload)
+        .as_deref()
+        .is_some_and(|p| p == payload))
 }
 
 fn short_code(symbol: &str) -> &str {

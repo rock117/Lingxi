@@ -1,4 +1,6 @@
 //! 每个 HTTP 请求一个 `request_id`，绑定到当前 Tokio task，供全部 tracing 日志打印。
+//!
+//! 响应阶段可能换 task，访问日志等需 [`attach_to_current_task`] 再绑一次。
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -20,18 +22,11 @@ fn new_id() -> String {
     Uuid::new_v4().to_string()
 }
 
-fn bind(id: &str) {
+/// 把 id 绑到当前 Tokio task（覆盖同 task 上旧值）。
+pub fn attach_to_current_task(id: &str) {
     if let Some(tid) = tokio::task::try_id() {
         if let Ok(mut map) = BINDINGS.lock() {
             map.insert(tid, id.to_string());
-        }
-    }
-}
-
-fn unbind() {
-    if let Some(tid) = tokio::task::try_id() {
-        if let Ok(mut map) = BINDINGS.lock() {
-            map.remove(&tid);
         }
     }
 }
@@ -70,15 +65,17 @@ impl Fairing for RequestIdFairing {
 
     async fn on_request(&self, req: &mut Request<'_>, _: &mut rocket::Data<'_>) {
         let id = resolve_id(req);
-        bind(&id);
-        // 固定本请求使用的 id（避免重复生成）
+        attach_to_current_task(&id);
         let id_clone = id.clone();
         req.local_cache(|| RequestId(id_clone));
     }
 
     async fn on_response<'r>(&self, req: &'r Request<'_>, res: &mut Response<'r>) {
         let id = from_request(req);
+        // 响应 fairing / 收尾日志可能不在原 task，再绑一次
+        attach_to_current_task(&id);
         res.set_header(Header::new(HEADER, id));
-        unbind();
+        // 不在此处 unbind：避免访问日志等后置 fairing 看到 request_id=-
+        // 下一请求 on_request 会覆盖同 task 绑定
     }
 }
