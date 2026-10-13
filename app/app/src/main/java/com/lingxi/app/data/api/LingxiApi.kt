@@ -57,4 +57,10 @@ interface LingxiApi {
 
     @POST("api/notifications/{id}/read")
     suspend fun markRead(@Path("id") id: Long): NotificationItem
+
+    @DELETE("api/notifications/{id}")
+    suspend fun deleteNotification(@Path("id") id: Long)
+
+    @DELETE("api/notifications")
+    suspend fun deleteAllNotifications()
 }

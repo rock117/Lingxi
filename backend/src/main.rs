@@ -140,6 +140,8 @@ async fn rocket() -> _ {
                 routes::condition::delete,
                 routes::notification::list,
                 routes::notification::mark_read,
+                routes::notification::delete_one,
+                routes::notification::delete_all,
                 market::routes::sentiment,
                 market::routes::mid_term_trend,
                 market::routes::intraday_alerts,

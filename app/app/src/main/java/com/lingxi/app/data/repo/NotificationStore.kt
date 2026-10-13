@@ -47,4 +47,14 @@ object NotificationStore {
             runCatching { markRead(api, item.id) }
         }
     }
+
+    suspend fun delete(api: LingxiApi, id: Long) {
+        api.deleteNotification(id)
+        _notifications.update { list -> list.filter { it.id != id } }
+    }
+
+    suspend fun deleteAll(api: LingxiApi) {
+        api.deleteAllNotifications()
+        _notifications.value = emptyList()
+    }
 }

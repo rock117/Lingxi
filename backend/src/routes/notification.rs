@@ -1,7 +1,7 @@
 use entity::notification;
 use rocket::serde::json::Json;
-use rocket::{get, post};
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
+use rocket::{delete, get, post};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, ModelTrait, QueryFilter, QueryOrder, Set};
 use serde::Serialize;
 
 use crate::error::{AppError, AppResult};
@@ -68,4 +68,27 @@ pub async fn mark_read(
     active.read = Set(true);
     let saved = active.update(db.inner()).await?;
     Ok(Json(saved.try_into()?))
+}
+
+#[delete("/api/notifications/<id>")]
+pub async fn delete_one(
+    db: &rocket::State<sea_orm::DatabaseConnection>,
+    id: i64,
+) -> AppResult<rocket::http::Status> {
+    let m = notification::Entity::find_by_id(id)
+        .one(db.inner())
+        .await?
+        .ok_or(AppError::NotFound)?;
+    m.delete(db.inner()).await?;
+    Ok(rocket::http::Status::NoContent)
+}
+
+#[delete("/api/notifications")]
+pub async fn delete_all(
+    db: &rocket::State<sea_orm::DatabaseConnection>,
+) -> AppResult<rocket::http::Status> {
+    notification::Entity::delete_many()
+        .exec(db.inner())
+        .await?;
+    Ok(rocket::http::Status::NoContent)
 }

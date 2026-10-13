@@ -29,6 +29,10 @@ class NotificationViewModel(application: Application) : AndroidViewModel(applica
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
+    val totalCount: StateFlow<Int> = NotificationStore.notifications
+        .map { it.size }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
     init {
         refresh()
     }
@@ -56,6 +60,26 @@ class NotificationViewModel(application: Application) : AndroidViewModel(applica
             runCatching {
                 val cfg = prefs.configFlow.first()
                 NotificationStore.markAllRead(ApiClient.create(cfg))
+            }
+        }
+    }
+
+    fun delete(id: Long) {
+        viewModelScope.launch {
+            runCatching {
+                val cfg = prefs.configFlow.first()
+                NotificationStore.delete(ApiClient.create(cfg), id)
+                NotificationHelper.cancel(getApplication(), id)
+            }
+        }
+    }
+
+    fun deleteAll() {
+        viewModelScope.launch {
+            runCatching {
+                val cfg = prefs.configFlow.first()
+                NotificationStore.deleteAll(ApiClient.create(cfg))
+                NotificationHelper.cancelAll(getApplication())
             }
         }
     }

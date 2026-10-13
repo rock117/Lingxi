@@ -237,6 +237,8 @@ python script/deploy_backend.py --service-only
 | DELETE | `/api/conditions/:id` | 删除条件 |
 | GET | `/api/notifications` | 列出通知（`?unread=true` 过滤未读） |
 | POST | `/api/notifications/:id/read` | 标记通知已读 |
+| DELETE | `/api/notifications/:id` | 删除单条通知 |
+| DELETE | `/api/notifications` | 清空全部通知 |
 | GET | `/api/market/sentiment` | 短线情绪 MSI |
 | GET | `/api/market/mid-term-trend` | 中期趋势 MTT |
 | GET | `/api/market/intraday-alerts` | 日内强势 Top10（即时计算，不推送） |

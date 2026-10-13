@@ -14,19 +14,24 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -51,23 +56,42 @@ private const val COLLAPSED_COUNT = 3
 @Composable
 fun NotificationListScreen(viewModel: NotificationViewModel) {
     val items by viewModel.notifications.collectAsStateWithLifecycle()
+    val total by viewModel.totalCount.collectAsStateWithLifecycle()
+    val unread by viewModel.unreadCount.collectAsStateWithLifecycle()
+    var confirmClear by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
+                .padding(horizontal = 12.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = "点卡片展开/收起 · 展开时标记已读",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(onClick = { viewModel.markAllRead() }) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (unread > 0) "共 $total 条 · 未读 $unread" else "共 $total 条",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = "点卡片展开/收起 · 展开时标记已读",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            TextButton(
+                onClick = { viewModel.markAllRead() },
+                enabled = unread > 0,
+            ) {
                 Icon(Icons.Default.DoneAll, contentDescription = null)
-                Text(" 全部已读")
+                Text(" 已读")
+            }
+            TextButton(
+                onClick = { confirmClear = true },
+                enabled = total > 0,
+            ) {
+                Icon(Icons.Default.DeleteSweep, contentDescription = null)
+                Text(" 清空")
             }
         }
 
@@ -92,10 +116,34 @@ fun NotificationListScreen(viewModel: NotificationViewModel) {
                         onExpandUnread = {
                             if (!item.read) viewModel.markRead(item.id)
                         },
+                        onDelete = { viewModel.delete(item.id) },
                     )
                 }
             }
         }
+    }
+
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("清空全部通知？") },
+            text = { Text("将删除全部 $total 条消息，不可恢复。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmClear = false
+                        viewModel.deleteAll()
+                    },
+                ) {
+                    Text("清空")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClear = false }) {
+                    Text("取消")
+                }
+            },
+        )
     }
 }
 
@@ -103,6 +151,7 @@ fun NotificationListScreen(viewModel: NotificationViewModel) {
 private fun NotificationCard(
     item: NotificationItem,
     onExpandUnread: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     val alert = item.parseIntradayAlert()
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
@@ -137,7 +186,17 @@ private fun NotificationCard(
                         "未读",
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(end = 8.dp),
+                        modifier = Modifier.padding(end = 4.dp),
+                    )
+                }
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.padding(0.dp),
+                ) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "删除",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 Icon(
