@@ -97,12 +97,18 @@ class NotificationViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
-    fun deleteAll() {
+    fun deleteSelected(ids: List<Long>) {
+        if (ids.isEmpty()) return
         viewModelScope.launch {
             runCatching {
                 val cfg = prefs.configFlow.first()
-                NotificationStore.deleteAll(ApiClient.create(cfg))
-                NotificationHelper.cancelAll(getApplication())
+                val api = ApiClient.create(cfg)
+                for (id in ids) {
+                    runCatching {
+                        NotificationStore.delete(api, id)
+                        NotificationHelper.cancel(getApplication(), id)
+                    }
+                }
             }
         }
     }
