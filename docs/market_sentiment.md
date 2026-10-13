@@ -60,7 +60,7 @@ msi_daily = W_DIRECTION * Direction
 2. `N`：API `days`，默认 `5`，`clamp` 到 `[3, 30]`。  
 3. 单日因子 **禁止** 读取其他交易日行情。  
 4. `recent` **包含当日**：序列为「库内前 `N-1` 日日分 + 当日日分」（时间正序），再 EWMA。  
-5. **开市日连续竞价**（`sc_trade_calendar.is_open = TRUE`，且上海时钟 `09:30–11:30` / `13:00–15:00`）用 Miana 覆盖当日截面；否则读库。最近 N 日只取日历中 `is_open` 日。  
+5. **开市日连续竞价**（`sc_trade_calendar.is_open = TRUE`，且上海时钟 `09:30–11:30` / `13:00–15:00`）用 Miana 覆盖当日截面；否则读库。最近 N 日取日历中 `is_open` 且 `trade_date ≤ 上海今日` 的日期（日历可含未来开市日，不参与历史窗口）。  
 6. 新因子必须可解释、可单测。
 
 ### 1.3 `map`
@@ -263,7 +263,7 @@ recent.series = series
 
 ### 6.3 数据装载（路由 / data_source）
 
-1. 从库加载最近 `N` 个开市日全市场日 K（`sc_trade_calendar WHERE is_open = TRUE`）。  
+1. 从库加载最近 `N` 个开市日全市场日 K（`is_open` 且 `trade_date ≤ 上海今日`）。  
 2. 若处于盘中实时窗：用 Miana 实时覆盖/追加 **最新日** 截面（规则同既有 hybrid）。  
 3. 对装载结果调用 `calculate_msi`。  
 4. **缓存**：开市日连续竞价窗内每次重算，结果写入进程内存 + 表 `market_result_cache`（`kind=msi`，主键 `(kind, date)`，`payload` JSONB，不区分 `days`）。非交易时段取该 kind 下 `date` 最近一条返回；重启后可从库恢复。无缓存时（首次）计算一次并落库。

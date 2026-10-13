@@ -9,9 +9,14 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use chrono::{DateTime, FixedOffset, Utc};
-use tracing_subscriber::fmt::format::Writer;
+use tracing::Event;
+use tracing::Subscriber;
+use tracing_subscriber::fmt::format::{Format, FormatEvent, FormatFields, Full, Writer};
 use tracing_subscriber::fmt::time::FormatTime;
-use tracing_subscriber::fmt::MakeWriter;
+use tracing_subscriber::fmt::{FmtContext, MakeWriter};
+use tracing_subscriber::registry::LookupSpan;
+
+use crate::request_id;
 
 /// 上海 UTC+8（无夏令时）。
 pub fn shanghai_offset() -> FixedOffset {
@@ -40,6 +45,38 @@ impl FormatTime for ShanghaiTimer {
     fn format_time(&self, w: &mut Writer<'_>) -> std::fmt::Result {
         let sh = Utc::now().with_timezone(&shanghai_offset());
         write!(w, "{}", sh.format("%Y-%m-%dT%H:%M:%S%.3f%z"))
+    }
+}
+
+/// 在每行日志前打印 `request_id=`（若当前 Tokio task 已绑定）。
+pub struct RequestIdFormat {
+    inner: Format<Full, ShanghaiTimer>,
+}
+
+impl RequestIdFormat {
+    pub fn new(timer: ShanghaiTimer, ansi: bool) -> Self {
+        Self {
+            inner: Format::default().with_timer(timer).with_ansi(ansi),
+        }
+    }
+}
+
+impl<S, N> FormatEvent<S, N> for RequestIdFormat
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        ctx: &FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &Event<'_>,
+    ) -> std::fmt::Result {
+        match request_id::current() {
+            Some(id) => write!(writer, "request_id={id} ")?,
+            None => write!(writer, "request_id=- ")?,
+        }
+        self.inner.format_event(ctx, writer, event)
     }
 }
 

@@ -4,6 +4,7 @@ mod db;
 mod error;
 mod logging;
 mod market;
+mod request_id;
 mod routes;
 mod ws;
 
@@ -28,17 +29,15 @@ fn init_logging(cfg: &AppConfig) {
 
     let timer = logging::ShanghaiTimer;
     let stdout_layer = fmt::layer()
-        .with_timer(timer.clone())
-        .with_writer(std::io::stdout)
-        .with_ansi(true);
+        .event_format(logging::RequestIdFormat::new(timer.clone(), true))
+        .with_writer(std::io::stdout);
 
     match logging::DateSizeFileWriter::open(&cfg.log_dir, "lingxi", cfg.log_max_bytes) {
         Ok(file_writer) => {
             let file_hint = file_writer.current_path_hint();
             let file_layer = fmt::layer()
-                .with_timer(timer)
-                .with_writer(file_writer)
-                .with_ansi(false);
+                .event_format(logging::RequestIdFormat::new(timer, false))
+                .with_writer(file_writer);
             tracing_subscriber::registry()
                 .with(filter)
                 .with(stdout_layer)
@@ -127,6 +126,7 @@ async fn rocket() -> _ {
         .manage(miana)
         .manage(realtime_cache)
         .manage(hub)
+        .attach(request_id::RequestIdFairing)
         .attach(access_log::AccessLog)
         .attach(cors)
         .mount(

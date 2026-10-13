@@ -3,9 +3,10 @@
 //! 表定义见 `SecuritiesCollector/backend/migrations`：
 //! - `sc_stock`
 //! - `sc_stock_kline_d1_bfq`
-//! - `sc_trade_calendar`（`is_open` / `pre_trade_date`；最近 N 个**开市**日）
+//! - `sc_trade_calendar`（`is_open`：该日是否开市，可含未来日期；`pre_trade_date`）
 //!
-//! 实时覆盖条件：`sc_trade_calendar.is_open = TRUE`（当日）且处于连续竞价时钟窗。
+//! 读历史窗口：取「≤ 上海今日」的最近 N 个开市日再 JOIN 日 K（未来开市日只用于判断，不进窗口）。
+//! 实时覆盖条件：当日 `is_open` 且处于连续竞价时钟窗。
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Mutex, OnceLock};
@@ -53,15 +54,17 @@ fn change_pct(close: f64, pre_close: f64) -> f64 {
     }
 }
 
-/// 取最近 `days` 个开市日、全部 `is_active` 股票的日 K，组装为 MSI/MTT 输入。
+/// 取最近 `days` 个开市日（≤ 上海今日）、全部 `is_active` 股票的日 K。
 ///
-/// 开市日仅来自 `sc_trade_calendar WHERE is_open`（假定日历完整可信）。
-/// 结果短缓存 60s（按 `days` 分槽）。
+/// 日历 `is_open` 只表示「这一天开不开市」，可含未来；取窗口时用
+/// `trade_date <= 今日`，再按日期倒序 LIMIT N，然后 JOIN 日 K。
+/// 非空结果短缓存 60s（按 `days` 分槽）。
 pub async fn load_market_window(
     db: &DatabaseConnection,
     days: usize,
 ) -> Result<MarketDataInput, DbErr> {
     let days = days.max(1);
+    let as_of = session::shanghai_today_naive();
 
     if let Ok(guard) = window_cache().lock() {
         if let Some(hit) = guard.get(&days) {
@@ -73,12 +76,12 @@ pub async fn load_market_window(
     }
 
     let t0 = Instant::now();
-    // 仅开市日；走 (trade_date, symbol) 覆盖索引；排序交给 rows_to_input
     let sql = r#"
 WITH dates AS (
     SELECT trade_date
     FROM sc_trade_calendar
     WHERE is_open = TRUE
+      AND trade_date <= $2
     ORDER BY trade_date DESC
     LIMIT $1
 )
@@ -102,7 +105,7 @@ INNER JOIN sc_stock s
     let rows = KlineRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         sql,
-        [(days as i64).into()],
+        [(days as i64).into(), as_of.into()],
     ))
     .all(db)
     .await?;
@@ -111,13 +114,16 @@ INNER JOIN sc_stock s
     let input = rows_to_input(rows);
     tracing::info!(
         days,
+        as_of = %as_of,
         rows = n,
         snapshots = input.snapshots.len(),
         elapsed_ms = t0.elapsed().as_millis() as u64,
         "已加载行情窗口"
     );
 
-    if let Ok(mut guard) = window_cache().lock() {
+    if input.snapshots.is_empty() {
+        log_empty_market_window(db, days, as_of).await;
+    } else if let Ok(mut guard) = window_cache().lock() {
         guard.insert(
             days,
             CachedWindow {
@@ -128,6 +134,125 @@ INNER JOIN sc_stock s
     }
 
     Ok(input)
+}
+
+/// 窗口为空时输出日历 / K 线上下文（对照服务器日志定位）。
+async fn log_empty_market_window(db: &DatabaseConnection, days: usize, as_of: NaiveDate) {
+    #[derive(Debug, FromQueryResult)]
+    struct Ctx {
+        open_cal_total: i64,
+        open_cal_as_of: i64,
+        klines: i64,
+        stocks: i64,
+        max_open_cal: Option<NaiveDate>,
+        max_open_as_of: Option<NaiveDate>,
+        max_kline: Option<NaiveDate>,
+        recent_open_with_k: i64,
+        recent_open_without_k: i64,
+    }
+
+    let sql = r#"
+WITH recent AS (
+    SELECT trade_date
+    FROM sc_trade_calendar
+    WHERE is_open = TRUE
+      AND trade_date <= $2
+    ORDER BY trade_date DESC
+    LIMIT $1
+)
+SELECT
+    (SELECT COUNT(*)::bigint FROM sc_trade_calendar WHERE is_open = TRUE) AS open_cal_total,
+    (SELECT COUNT(*)::bigint FROM sc_trade_calendar WHERE is_open = TRUE AND trade_date <= $2) AS open_cal_as_of,
+    (SELECT COUNT(*)::bigint FROM sc_stock_kline_d1_bfq) AS klines,
+    (SELECT COUNT(*)::bigint FROM sc_stock WHERE is_active = TRUE) AS stocks,
+    (SELECT MAX(trade_date) FROM sc_trade_calendar WHERE is_open = TRUE) AS max_open_cal,
+    (SELECT MAX(trade_date) FROM sc_trade_calendar WHERE is_open = TRUE AND trade_date <= $2) AS max_open_as_of,
+    (SELECT MAX(trade_date) FROM sc_stock_kline_d1_bfq) AS max_kline,
+    (
+        SELECT COUNT(*)::bigint FROM recent r
+        WHERE EXISTS (
+            SELECT 1 FROM sc_stock_kline_d1_bfq k WHERE k.trade_date = r.trade_date
+        )
+    ) AS recent_open_with_k,
+    (
+        SELECT COUNT(*)::bigint FROM recent r
+        WHERE NOT EXISTS (
+            SELECT 1 FROM sc_stock_kline_d1_bfq k WHERE k.trade_date = r.trade_date
+        )
+    ) AS recent_open_without_k
+"#;
+
+    match Ctx::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        sql,
+        [(days as i64).into(), as_of.into()],
+    ))
+    .one(db)
+    .await
+    {
+        Ok(Some(c)) => tracing::warn!(
+            days,
+            as_of = %as_of,
+            open_cal_total = c.open_cal_total,
+            open_cal_as_of = c.open_cal_as_of,
+            klines = c.klines,
+            active_stocks = c.stocks,
+            max_open_cal = ?c.max_open_cal,
+            max_open_as_of = ?c.max_open_as_of,
+            max_kline = ?c.max_kline,
+            recent_open_with_k = c.recent_open_with_k,
+            recent_open_without_k = c.recent_open_without_k,
+            "行情窗口为空：≤今日的开市日与 K 线对齐情况"
+        ),
+        Ok(None) => tracing::warn!(days, as_of = %as_of, "行情窗口为空：诊断查询无行"),
+        Err(e) => tracing::warn!(days, as_of = %as_of, error = %e, "行情窗口为空：诊断查询失败"),
+    }
+
+    #[derive(Debug, FromQueryResult)]
+    struct DayHit {
+        trade_date: NaiveDate,
+        has_k: bool,
+    }
+
+    let days_sql = r#"
+SELECT
+    c.trade_date,
+    EXISTS (
+        SELECT 1 FROM sc_stock_kline_d1_bfq k WHERE k.trade_date = c.trade_date
+    ) AS has_k
+FROM sc_trade_calendar c
+WHERE c.is_open = TRUE
+  AND c.trade_date <= $2
+ORDER BY c.trade_date DESC
+LIMIT $1
+"#;
+    match DayHit::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        days_sql,
+        [(days as i64).into(), as_of.into()],
+    ))
+    .all(db)
+    .await
+    {
+        Ok(rows) => {
+            let detail: Vec<String> = rows
+                .iter()
+                .map(|r| format!("{}:has_k={}", r.trade_date, r.has_k))
+                .collect();
+            tracing::warn!(
+                days,
+                as_of = %as_of,
+                recent_open_days = %detail.join(", "),
+                "行情窗口为空：≤今日最近开市日明细"
+            );
+        }
+        Err(e) => tracing::warn!(
+            days,
+            as_of = %as_of,
+            error = %e,
+            "行情窗口为空：开市日明细查询失败"
+        ),
+    }
 }
 
 /// 开市日且处于连续竞价时钟窗（MSI / 日内推送「应刷新」条件）。
@@ -193,6 +318,10 @@ pub async fn load_market_window_hybrid(
 
     let symbols = load_active_symbols(db).await.map_err(AppError::from)?;
     if symbols.is_empty() {
+        tracing::warn!(
+            date = %today,
+            "开市竞价需拉实时但 sc_stock 无 is_active 标的"
+        );
         return Err(AppError::BadRequest(
             "无活跃股票：请确认 sc_stock.is_active 已由 SecuritiesCollector 写入".into(),
         ));

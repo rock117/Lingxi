@@ -26,8 +26,18 @@ use super::session;
 /// MTT 需要至少 MA60 + 斜率回看，默认取最近 70 个交易日。
 const MTT_LOOKBACK_DAYS: usize = 70;
 
-fn ensure_non_empty(input: MarketDataInput, realtime_session: bool) -> AppResult<MarketDataInput> {
+fn ensure_non_empty(
+    input: MarketDataInput,
+    days: usize,
+    realtime_session: bool,
+) -> AppResult<MarketDataInput> {
     if input.snapshots.is_empty() {
+        tracing::warn!(
+            days,
+            realtime_session,
+            shanghai_today = %session::shanghai_today(),
+            "行情窗口为空，将返回 400（详见 data_source 对齐诊断日志）"
+        );
         return Err(AppError::BadRequest(
             "行情表无数据：请确认 sc_stock / sc_stock_kline_d1_bfq 已由 SecuritiesCollector 写入"
                 .into(),
@@ -60,12 +70,12 @@ async fn load_msi_input(
     cache: &RealtimeDayCache,
 ) -> AppResult<MarketDataInput> {
     let input = data_source::load_market_window_hybrid(db, days, miana, cache).await?;
-    ensure_non_empty(input, session::is_realtime_session_now())
+    ensure_non_empty(input, days, session::is_realtime_session_now())
 }
 
 async fn load_mtt_input(db: &DatabaseConnection, days: usize) -> AppResult<MarketDataInput> {
     let input = data_source::load_market_window(db, days).await?;
-    ensure_non_empty(input, false)
+    ensure_non_empty(input, days, false)
 }
 
 /// `GET /api/market/sentiment?days=5`

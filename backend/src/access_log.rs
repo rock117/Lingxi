@@ -1,9 +1,11 @@
-//! HTTP 访问日志：每个请求记录 ip / method / url / 参数 / 状态码 / 耗时。
+//! HTTP 访问日志：每个请求记录 request_id / ip / method / url / 参数 / 状态码 / 耗时。
 
 use std::time::Instant;
 
 use rocket::fairing::{Fairing, Info, Kind};
 use rocket::{Data, Request, Response};
+
+use crate::request_id;
 
 const BODY_PEEK_MAX: usize = 1024;
 const PARAMS_LOG_MAX: usize = 512;
@@ -40,11 +42,13 @@ async fn collect_params(req: &Request<'_>, data: &mut Data<'_>) -> String {
         }
     }
 
-    // POST/PUT 等：窥视一小段 body（不消费，handler 仍可读取）
     let peeked = data.peek(BODY_PEEK_MAX).await;
     if !peeked.is_empty() {
         let text = String::from_utf8_lossy(peeked);
-        if text.chars().any(|c| !c.is_control() || c == '\n' || c == '\r' || c == '\t') {
+        if text
+            .chars()
+            .any(|c| !c.is_control() || c == '\n' || c == '\r' || c == '\t')
+        {
             return truncate_params(&text);
         }
     }
@@ -84,20 +88,21 @@ impl Fairing for AccessLog {
             params: "-".into(),
         });
         let elapsed_ms = meta.started.elapsed().as_secs_f64() * 1000.0;
+        // 响应阶段可能换了 Tokio task，按 Request 再绑一次供行首 request_id=
+        let rid = request_id::from_request(req);
+        request_id::attach_to_current_task(&rid);
         let ip = client_ip(req);
         let method = req.method();
         let path = req.uri().path();
         let status = res.status().code;
-
-        tracing::info!(
-            target: "lingxi_backend::access",
-            "ip={} {} {} params={} status={} elapsed_ms={:.1}",
-            ip,
-            method,
-            path,
+        let line = format!(
+            "ip={ip} {method} {path} params={} status={status} elapsed_ms={elapsed_ms:.1}",
             meta.params,
-            status,
-            elapsed_ms
         );
+        if status >= 400 {
+            tracing::warn!(target: "lingxi_backend::access", "{line}");
+        } else {
+            tracing::info!(target: "lingxi_backend::access", "{line}");
+        }
     }
 }

@@ -21,8 +21,19 @@ struct ErrorResponse {
     message: String,
 }
 
+impl AppError {
+    fn error_code(&self) -> &'static str {
+        match self {
+            AppError::NotFound => "not_found",
+            AppError::BadRequest(_) => "bad_request",
+            AppError::Db(_) => "db",
+            AppError::Internal(_) => "internal",
+        }
+    }
+}
+
 impl<'r> Responder<'r, 'static> for AppError {
-    fn respond_to(self, _: &'r Request<'_>) -> Result<Response<'static>, Status> {
+    fn respond_to(self, req: &'r Request<'_>) -> Result<Response<'static>, Status> {
         let (status, body) = match &self {
             AppError::NotFound => (
                 Status::NotFound,
@@ -46,6 +57,18 @@ impl<'r> Responder<'r, 'static> for AppError {
                 },
             ),
         };
+
+        let request_id = crate::request_id::from_request(req);
+        crate::request_id::attach_to_current_task(&request_id);
+        tracing::warn!(
+            target: "lingxi_backend::error",
+            method = %req.method(),
+            uri = %req.uri(),
+            status = status.code,
+            error_code = self.error_code(),
+            message = %self,
+            "请求失败"
+        );
 
         let body = serde_json::to_vec(&body).unwrap_or_else(|_| b"{}".to_vec());
         let response = Response::build()
