@@ -3,9 +3,9 @@
 //! 表定义见 `SecuritiesCollector/backend/migrations`：
 //! - `sc_stock`
 //! - `sc_stock_kline_d1_bfq`
-//! - `sc_trade_calendar`（最近 N 个交易日，避免对 K 线表 DISTINCT）
+//! - `sc_trade_calendar`（`is_open` / `pre_trade_date`；最近 N 个**开市**日）
 //!
-//! 仅「当日 + 连续竞价时段」用 Miana 覆盖最新交易日；其余一律读库。
+//! 实时覆盖条件：`sc_trade_calendar.is_open = TRUE`（当日）且处于连续竞价时钟窗。
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Mutex, OnceLock};
@@ -53,9 +53,9 @@ fn change_pct(close: f64, pre_close: f64) -> f64 {
     }
 }
 
-/// 取最近 `days` 个交易日、全部 `is_active` 股票的日 K，组装为 MSI/MTT 输入。
+/// 取最近 `days` 个开市日、全部 `is_active` 股票的日 K，组装为 MSI/MTT 输入。
 ///
-/// 优先用 `sc_trade_calendar` 取最近 N 日；日历为空时回退到对 K 线表 DISTINCT。
+/// 开市日仅来自 `sc_trade_calendar WHERE is_open`（假定日历完整可信）。
 /// 结果短缓存 60s（按 `days` 分槽）。
 pub async fn load_market_window(
     db: &DatabaseConnection,
@@ -73,13 +73,12 @@ pub async fn load_market_window(
     }
 
     let t0 = Instant::now();
-    let use_calendar = trade_calendar_has_rows(db).await?;
-    let sql = if use_calendar {
-        // 从轻量日历出发，走 (trade_date, symbol) 覆盖索引；排序交给 rows_to_input
-        r#"
+    // 仅开市日；走 (trade_date, symbol) 覆盖索引；排序交给 rows_to_input
+    let sql = r#"
 WITH dates AS (
     SELECT trade_date
     FROM sc_trade_calendar
+    WHERE is_open = TRUE
     ORDER BY trade_date DESC
     LIMIT $1
 )
@@ -98,33 +97,7 @@ INNER JOIN sc_stock_kline_d1_bfq k
 INNER JOIN sc_stock s
     ON s.symbol = k.symbol
    AND s.is_active = TRUE
-"#
-    } else {
-        tracing::warn!("sc_trade_calendar 为空，回退 DISTINCT sc_stock_kline_d1_bfq.trade_date");
-        r#"
-WITH dates AS (
-    SELECT DISTINCT trade_date
-    FROM sc_stock_kline_d1_bfq
-    ORDER BY trade_date DESC
-    LIMIT $1
-)
-SELECT
-    k.symbol,
-    k.trade_date,
-    k.open::double precision   AS open,
-    k.high::double precision   AS high,
-    k.low::double precision    AS low,
-    k.close::double precision  AS close,
-    k.pre_close::double precision AS pre_close,
-    k.amount::double precision AS amount
-FROM dates d
-INNER JOIN sc_stock_kline_d1_bfq k
-    ON k.trade_date = d.trade_date
-INNER JOIN sc_stock s
-    ON s.symbol = k.symbol
-   AND s.is_active = TRUE
-"#
-    };
+"#;
 
     let rows = KlineRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -140,7 +113,6 @@ INNER JOIN sc_stock s
         days,
         rows = n,
         snapshots = input.snapshots.len(),
-        calendar = use_calendar,
         elapsed_ms = t0.elapsed().as_millis() as u64,
         "已加载行情窗口"
     );
@@ -158,24 +130,25 @@ INNER JOIN sc_stock s
     Ok(input)
 }
 
-async fn trade_calendar_has_rows(db: &DatabaseConnection) -> Result<bool, DbErr> {
+/// `sc_trade_calendar.is_open`：当日是否开市。
+pub async fn is_open_trade_day(db: &DatabaseConnection, day: NaiveDate) -> Result<bool, DbErr> {
     #[derive(Debug, FromQueryResult)]
-    struct One {
-        #[allow(dead_code)]
-        n: i64,
+    struct Row {
+        is_open: bool,
     }
 
-    let row = One::find_by_statement(Statement::from_string(
+    let row = Row::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT 1::bigint AS n FROM sc_trade_calendar LIMIT 1".to_string(),
+        "SELECT is_open FROM sc_trade_calendar WHERE trade_date = $1 LIMIT 1",
+        [day.into()],
     ))
     .one(db)
     .await?;
 
-    Ok(row.is_some())
+    Ok(row.map(|r| r.is_open).unwrap_or(false))
 }
 
-/// 加载窗口；周一至周五连续竞价时段用 Miana 覆盖当日，其余读库。
+/// 加载窗口；**开市日**且连续竞价时钟窗内用 Miana 覆盖当日，其余读库。
 pub async fn load_market_window_hybrid(
     db: &DatabaseConnection,
     days: usize,
@@ -186,12 +159,24 @@ pub async fn load_market_window_hybrid(
         .await
         .map_err(AppError::from)?;
 
-    // 交易日：简单按上海周一至周五 + 竞价时段（不查 sc_trade_calendar）
     if !session::is_realtime_session_now() {
         return Ok(input);
     }
 
+    let today_d = session::shanghai_today_naive();
     let today = session::shanghai_today();
+    match is_open_trade_day(db, today_d).await {
+        Ok(true) => {}
+        Ok(false) => {
+            tracing::info!(date = %today, "日历 is_open=false，跳过实时");
+            return Ok(input);
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "查询 sc_trade_calendar.is_open 失败，跳过实时");
+            return Ok(input);
+        }
+    }
+
     let symbols = load_active_symbols(db).await.map_err(AppError::from)?;
     if symbols.is_empty() {
         return Err(AppError::BadRequest(
@@ -202,7 +187,7 @@ pub async fn load_market_window_hybrid(
     tracing::info!(
         date = %today,
         symbols = symbols.len(),
-        "工作日竞价时段：当日截面改用 Miana 实时行情"
+        "开市日竞价时段：当日截面改用 Miana 实时行情"
     );
 
     let stocks = cache.get_or_fetch(miana, &symbols, &today).await?;
@@ -351,10 +336,7 @@ pub async fn probe_market_tables(db: &DatabaseConnection) -> Result<(i64, Option
         r#"
 SELECT
     (SELECT COUNT(*)::bigint FROM sc_stock WHERE is_active = TRUE) AS stock_count,
-    COALESCE(
-        (SELECT MAX(trade_date) FROM sc_trade_calendar),
-        (SELECT MAX(trade_date) FROM sc_stock_kline_d1_bfq)
-    ) AS last_date
+    (SELECT MAX(trade_date) FROM sc_trade_calendar WHERE is_open = TRUE) AS last_date
 "#
         .to_string(),
     ))

@@ -60,7 +60,7 @@ msi_daily = W_DIRECTION * Direction
 2. `N`：API `days`，默认 `5`，`clamp` 到 `[3, 30]`。  
 3. 单日因子 **禁止** 读取其他交易日行情。  
 4. `recent` **包含当日**：序列为「库内前 `N-1` 日日分 + 当日日分」（时间正序），再 EWMA。  
-5. **周一至周五连续竞价**（上海 `09:30–11:30` / `13:00–15:00`）用 Miana 覆盖当日截面；周末与非竞价时段读库（暂不查节假日日历）。  
+5. **开市日连续竞价**（`sc_trade_calendar.is_open = TRUE`，且上海时钟 `09:30–11:30` / `13:00–15:00`）用 Miana 覆盖当日截面；否则读库。最近 N 日只取日历中 `is_open` 日。  
 6. 新因子必须可解释、可单测。
 
 ### 1.3 `map`
@@ -263,7 +263,7 @@ recent.series = series
 
 ### 6.3 数据装载（路由 / data_source）
 
-1. 从库加载最近 `N` 个交易日全市场日 K（交易日优先 `sc_trade_calendar`）。  
+1. 从库加载最近 `N` 个开市日全市场日 K（`sc_trade_calendar WHERE is_open = TRUE`）。  
 2. 若处于盘中实时窗：用 Miana 实时覆盖/追加 **最新日** 截面（规则同既有 hybrid）。  
 3. 对装载结果调用 `calculate_msi`，**不落库**。
 
@@ -332,7 +332,7 @@ GET /api/market/sentiment?days=5
 |---|---|
 | `days` | 近 N 日窗口，默认 `5`，`clamp` 到 `[3, 30]` |
 
-数据源：`sc_stock` + `sc_stock_kline_d1_bfq`；交易日优先 `sc_trade_calendar`。  
+数据源：`sc_stock` + `sc_stock_kline_d1_bfq`；开市日来自 `sc_trade_calendar`（`is_open` / `pre_trade_date`，与 Tushare `trade_cal` 一致）。  
 交易日连续竞价当日：Miana `/api/stock/v3/realtime`（MSI / 日内推送）。  
 ### 8.1 响应
 

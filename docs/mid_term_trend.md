@@ -394,7 +394,7 @@ function mtt_status(score):
 GET /api/market/mid-term-trend
 ```
 
-默认读最近约 70 个交易日的 `sc_stock` + `sc_stock_kline_d1_bfq`（**始终读库**，不调实时行情）；交易日列表优先 `sc_trade_calendar`。
+默认读最近约 70 个开市日的 `sc_stock` + `sc_stock_kline_d1_bfq`（**始终读库**，不调实时行情）；开市日列表来自 `sc_trade_calendar WHERE is_open`。
 
 响应示例：
 
