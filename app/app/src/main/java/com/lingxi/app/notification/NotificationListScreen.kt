@@ -22,12 +22,14 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,11 +55,13 @@ private val Shanghai = ZoneId.of("Asia/Shanghai")
 private val TimeFmt = DateTimeFormatter.ofPattern("MM-dd HH:mm")
 private const val COLLAPSED_COUNT = 3
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NotificationListScreen(viewModel: NotificationViewModel) {
     val items by viewModel.notifications.collectAsStateWithLifecycle()
     val total by viewModel.totalCount.collectAsStateWithLifecycle()
     val unread by viewModel.unreadCount.collectAsStateWithLifecycle()
+    val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     var confirmClear by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -74,7 +78,7 @@ fun NotificationListScreen(viewModel: NotificationViewModel) {
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "点卡片展开/收起 · 展开时标记已读",
+                    text = "下拉刷新 · 点卡片展开/收起时标记已读",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -95,29 +99,42 @@ fun NotificationListScreen(viewModel: NotificationViewModel) {
             }
         }
 
-        if (items.isEmpty()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text("暂无通知", style = MaterialTheme.typography.titleMedium)
-            }
-        } else {
-            LazyColumn(
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(items, key = { it.id }) { item ->
-                    NotificationCard(
-                        item = item,
-                        onExpandUnread = {
-                            if (!item.read) viewModel.markRead(item.id)
-                        },
-                        onDelete = { viewModel.delete(item.id) },
+        PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = { viewModel.refresh() },
+            modifier = Modifier.weight(1f),
+        ) {
+            if (items.isEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text("暂无通知", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "下拉可刷新",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp),
                     )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(items, key = { it.id }) { item ->
+                        NotificationCard(
+                            item = item,
+                            onExpandUnread = {
+                                if (!item.read) viewModel.markRead(item.id)
+                            },
+                            onDelete = { viewModel.delete(item.id) },
+                        )
+                    }
                 }
             }
         }

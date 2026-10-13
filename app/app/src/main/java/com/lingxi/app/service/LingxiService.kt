@@ -15,6 +15,7 @@ import com.lingxi.app.data.api.ApiClient
 import com.lingxi.app.data.prefs.ServerPrefs
 import com.lingxi.app.data.repo.NotificationStore
 import com.lingxi.app.data.ws.WsClient
+import com.lingxi.app.data.ws.WsEvent
 import com.lingxi.app.notification.NotificationHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -68,11 +69,16 @@ class LingxiService : Service() {
         if (wsJob?.isActive != true) {
             wsJob = scope.launch {
                 prefs.configFlow.collectLatest { cfg ->
-                    launch {
-                        runCatching { NotificationStore.refresh(ApiClient.create(cfg)) }
-                    }
-                    wsClient.connect(cfg).collect { item ->
-                        NotificationStore.ingest(item)
+                    // 每次连上/重连后 HTTP 补拉，避免后台断线期间漏推
+                    wsClient.connect(cfg).collect { event ->
+                        when (event) {
+                            WsEvent.Connected -> {
+                                runCatching { NotificationStore.refresh(ApiClient.create(cfg)) }
+                            }
+                            is WsEvent.Notification -> {
+                                NotificationStore.ingest(event.item)
+                            }
+                        }
                     }
                 }
             }

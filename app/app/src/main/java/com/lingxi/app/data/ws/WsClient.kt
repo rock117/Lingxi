@@ -18,11 +18,19 @@ import okhttp3.WebSocketListener
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
+/** WebSocket 会话事件：连上/重连后需 HTTP 补拉；消息为实时推送。 */
+sealed class WsEvent {
+    /** 首次连接或断线重连成功。 */
+    data object Connected : WsEvent()
+
+    data class Notification(val item: NotificationItem) : WsEvent()
+}
+
 /**
  * WebSocket 推送客户端。
  *
  * 连接 [ServerConfig.wsUrl]，收到 notification 类型消息后通过 Flow 发射。
- * 断线自动重连（指数退避，最大 30 秒）。
+ * 断线自动重连（指数退避，最大 30 秒）；每次连上都会发 [WsEvent.Connected]。
  */
 class WsClient {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -31,7 +39,7 @@ class WsClient {
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
 
-    fun connect(config: ServerConfig): Flow<NotificationItem> = callbackFlow {
+    fun connect(config: ServerConfig): Flow<WsEvent> = callbackFlow {
         val stopped = AtomicBoolean(false)
         var socket: WebSocket? = null
         var backoffMs = 1_000L
@@ -44,13 +52,14 @@ class WsClient {
                 object : WebSocketListener() {
                     override fun onOpen(webSocket: WebSocket, response: Response) {
                         backoffMs = 1_000L
+                        trySend(WsEvent.Connected)
                     }
 
                     override fun onMessage(webSocket: WebSocket, text: String) {
                         runCatching {
                             val msg = json.decodeFromString<WsPushMessage>(text)
                             if (msg.type == "notification" && msg.data != null) {
-                                trySend(msg.data)
+                                trySend(WsEvent.Notification(msg.data))
                             }
                         }
                     }

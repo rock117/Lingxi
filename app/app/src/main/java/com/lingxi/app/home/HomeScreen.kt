@@ -7,7 +7,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Badge
@@ -98,12 +97,9 @@ fun HomeScreen(
             }
         },
         floatingActionButton = {
-            when (tab) {
-                1 -> FloatingActionButton(onClick = onCreateCondition) {
+            if (tab == 1) {
+                FloatingActionButton(onClick = onCreateCondition) {
                     Icon(Icons.Default.Add, contentDescription = "新建条件")
-                }
-                2 -> FloatingActionButton(onClick = { notificationViewModel.refresh() }) {
-                    Icon(Icons.Default.NotificationsActive, contentDescription = "刷新通知")
                 }
             }
         },
