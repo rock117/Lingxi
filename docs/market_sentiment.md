@@ -334,7 +334,7 @@ GET /api/market/sentiment?days=5
 | `days` | 近 N 日窗口，默认 `5`，`clamp` 到 `[3, 30]` |
 
 数据源：`sc_stock` + `sc_stock_kline_d1_bfq`；开市日来自 `sc_trade_calendar`（`is_open` / `pre_trade_date`，与 Tushare `trade_cal` 一致）。  
-交易日连续竞价当日：Miana `/api/stock/v3/realtime`（MSI / 日内推送）；结果缓存见 §6.3。  
+交易日连续竞价当日：Miana `/api/stock/v3/realtime`（MSI / 日内推送；非企业版不用 `/realtimemarket`）；拉取截面写入 `market_realtime_snapshot`（`(symbol, quote_ts)`）；结果缓存见 §6.3。  
 
 ### 8.1 响应
 

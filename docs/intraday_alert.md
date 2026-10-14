@@ -23,7 +23,8 @@
 |---|---|
 | 间隔 | 300 秒 |
 | 时段 | 仅开市日连续竞价窗内重算、落库并推送；非交易时段不推（避免重复刷屏） |
-| 数据 | `load_market_window_hybrid(db, 6, …)`：近 5 个开市日（`is_open` 且 ≤ 今日）；竞价时段叠加当日 Miana |
+| 数据 | `load_market_window_hybrid(db, 6, …)`：近 5 个开市日（`is_open` 且 ≤ 今日）；竞价时段叠加当日 Miana（`/api/stock/v3/realtime`，非企业版全市场接口） |
+| 原始行情 | 每次未命中内存 TTL 的拉取写入 `market_realtime_snapshot`（主键 `(symbol, quote_ts)`，含市值等；一天多条） |
 | 缓存 | 表 `market_result_cache`（`kind=intraday_alert`，主键 `(kind, date)`，`payload` JSONB；盘中写入） |
 | 通道 | `PushMessage { type: "notification", data: NotificationItem }` |
 

@@ -16,5 +16,6 @@ pub mod miana;
 pub mod result_cache;
 pub mod rate_limit;
 pub mod realtime_cache;
+pub mod realtime_store;
 pub mod routes;
 pub mod session;

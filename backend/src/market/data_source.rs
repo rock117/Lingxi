@@ -333,7 +333,7 @@ pub async fn load_market_window_hybrid(
         "开市日竞价时段：当日截面改用 Miana 实时行情"
     );
 
-    let stocks = cache.get_or_fetch(miana, &symbols, &today).await?;
+    let stocks = cache.get_or_fetch(db, miana, &symbols, &today).await?;
     apply_realtime_latest_day(&mut input, stocks, &today, days);
     Ok(input)
 }

@@ -1,12 +1,14 @@
 //! Miana 实时行情客户端：`GET /api/stock/v3/realtime`。
 //!
 //! 约束：单次最多 20 支代码；全局限流默认约 480 次/分钟。
+//! 非企业版：不用 `/realtimemarket`。
 
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
+use chrono::Utc;
 use reqwest::Client;
 use serde::Deserialize;
 use tracing::{debug, info, warn};
@@ -25,6 +27,56 @@ pub struct MianaClient {
     limiter: RateLimiter,
 }
 
+/// 一次实时拉取的落库行（映射 `market_realtime_snapshot`）。
+#[derive(Debug, Clone)]
+pub struct RealtimeSnapshot {
+    pub symbol: String,
+    pub quote_ts: i64,
+    pub local_date: String,
+    pub trade_date: String,
+    pub fetched_at: String,
+    pub name: Option<String>,
+    pub trade_status: Option<String>,
+    pub price: f64,
+    pub open: Option<f64>,
+    pub high: Option<f64>,
+    pub low: Option<f64>,
+    pub pre_close: Option<f64>,
+    pub volume: Option<f64>,
+    pub amount: Option<f64>,
+    pub change_amt: Option<f64>,
+    pub change_rate: Option<f64>,
+    pub high_limit: Option<f64>,
+    pub low_limit: Option<f64>,
+    pub turnover: Option<f64>,
+    pub vol_ratio: Option<f64>,
+    pub amplitude: Option<f64>,
+    pub active_buy_vol: Option<f64>,
+    pub active_sell_vol: Option<f64>,
+    pub net_inflow: Option<f64>,
+    pub mkt_cap: Option<f64>,
+    pub float_cap: Option<f64>,
+}
+
+impl RealtimeSnapshot {
+    pub fn to_stock_daily(&self) -> StockDailyData {
+        let close = self.price;
+        let open = self.open.filter(|v| *v > 0.0).unwrap_or(close);
+        let high = self.high.filter(|v| *v > 0.0).unwrap_or(close.max(open));
+        let low = self.low.filter(|v| *v > 0.0).unwrap_or(close.min(open));
+        StockDailyData {
+            symbol: self.symbol.clone(),
+            date: self.trade_date.clone(),
+            open,
+            high,
+            low,
+            close_price: close,
+            amount: self.amount.unwrap_or(0.0).max(0.0),
+            change_pct: self.change_rate.unwrap_or(0.0),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ApiResponse<T> {
     code: i32,
@@ -37,19 +89,77 @@ struct ApiResponse<T> {
 struct RealtimeItem {
     code: String,
     #[serde(default)]
-    price: Option<String>,
+    name: Option<String>,
     #[serde(default)]
-    open: Option<String>,
+    trade_status: Option<String>,
     #[serde(default)]
-    high: Option<String>,
-    #[serde(default)]
-    low: Option<String>,
-    #[serde(default)]
-    amount: Option<String>,
-    #[serde(default)]
-    change_rate: Option<String>,
+    timestamp: Option<i64>,
     #[serde(default)]
     local_date: Option<String>,
+    #[serde(default)]
+    price: Option<FlexNum>,
+    #[serde(default)]
+    open: Option<FlexNum>,
+    #[serde(default)]
+    high: Option<FlexNum>,
+    #[serde(default)]
+    low: Option<FlexNum>,
+    #[serde(default)]
+    pre_close: Option<FlexNum>,
+    #[serde(default)]
+    volume: Option<FlexNum>,
+    #[serde(default)]
+    amount: Option<FlexNum>,
+    #[serde(default)]
+    change: Option<FlexNum>,
+    #[serde(default)]
+    change_rate: Option<FlexNum>,
+    #[serde(default)]
+    high_limit: Option<FlexNum>,
+    #[serde(default)]
+    low_limit: Option<FlexNum>,
+    #[serde(default)]
+    turnover: Option<FlexNum>,
+    #[serde(default)]
+    vol_ratio: Option<FlexNum>,
+    #[serde(default)]
+    amplitude: Option<FlexNum>,
+    #[serde(default)]
+    active_buy_vol: Option<FlexNum>,
+    #[serde(default)]
+    active_sell_vol: Option<FlexNum>,
+    #[serde(default)]
+    net_inflow: Option<FlexNum>,
+    #[serde(default)]
+    mkt_cap: Option<FlexNum>,
+    #[serde(default)]
+    float_cap: Option<FlexNum>,
+}
+
+/// 接口数值可能是字符串或 JSON number。
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum FlexNum {
+    F(f64),
+    I(i64),
+    S(String),
+}
+
+impl FlexNum {
+    fn as_f64(&self) -> Option<f64> {
+        match self {
+            FlexNum::F(v) if v.is_finite() => Some(*v),
+            FlexNum::I(v) => Some(*v as f64),
+            FlexNum::S(s) => {
+                let t = s.trim();
+                if t.is_empty() {
+                    return None;
+                }
+                f64::from_str(t).ok().filter(|v| v.is_finite())
+            }
+            _ => None,
+        }
+    }
 }
 
 impl MianaClient {
@@ -71,12 +181,12 @@ impl MianaClient {
         !self.token.trim().is_empty()
     }
 
-    /// 按批拉取实时行情，组装为当日 `StockDailyData`（`symbol` 保留库内完整代码）。
-    pub async fn fetch_day_snapshot(
+    /// 按批拉取实时行情，返回完整快照（含市值等），供落库与计算。
+    pub async fn fetch_realtime_snapshots(
         &self,
         symbols: &[String],
         trade_date: &str,
-    ) -> Result<Vec<StockDailyData>> {
+    ) -> Result<Vec<RealtimeSnapshot>> {
         if symbols.is_empty() {
             return Ok(Vec::new());
         }
@@ -90,7 +200,8 @@ impl MianaClient {
             by_code.insert(code.to_string(), s.clone());
         }
 
-        let mut out: Vec<StockDailyData> = Vec::with_capacity(symbols.len());
+        let fetched_at = Utc::now().to_rfc3339();
+        let mut out: Vec<RealtimeSnapshot> = Vec::with_capacity(symbols.len());
         let batches: Vec<&[String]> = symbols.chunks(BATCH_SIZE).collect();
         info!(
             symbols = symbols.len(),
@@ -104,8 +215,8 @@ impl MianaClient {
                 let Some(symbol) = by_code.get(&item.code).cloned() else {
                     continue;
                 };
-                if let Some(stock) = item_to_stock(&item, &symbol, trade_date) {
-                    out.push(stock);
+                if let Some(snap) = item_to_snapshot(&item, &symbol, trade_date, &fetched_at) {
+                    out.push(snap);
                 }
             }
             if (i + 1) % 50 == 0 || i + 1 == batches.len() {
@@ -118,7 +229,10 @@ impl MianaClient {
         }
 
         if out.is_empty() {
-            return Err(anyhow!("Miana 实时行情返回空结果（symbols={}）", symbols.len()));
+            return Err(anyhow!(
+                "Miana 实时行情返回空结果（symbols={}）",
+                symbols.len()
+            ));
         }
         info!(got = out.len(), date = %trade_date, "实时行情拉取完成");
         Ok(out)
@@ -157,42 +271,64 @@ impl MianaClient {
     }
 }
 
-fn parse_f64(s: Option<&String>) -> Option<f64> {
-    let s = s?.trim();
-    if s.is_empty() {
-        return None;
-    }
-    f64::from_str(s).ok().filter(|v| v.is_finite())
+fn flex(n: &Option<FlexNum>) -> Option<f64> {
+    n.as_ref().and_then(FlexNum::as_f64)
 }
 
-fn item_to_stock(item: &RealtimeItem, symbol: &str, trade_date: &str) -> Option<StockDailyData> {
-    let close = parse_f64(item.price.as_ref())?;
-    if close <= 0.0 {
+fn item_to_snapshot(
+    item: &RealtimeItem,
+    symbol: &str,
+    trade_date: &str,
+    fetched_at: &str,
+) -> Option<RealtimeSnapshot> {
+    let price = flex(&item.price)?;
+    if price <= 0.0 {
         return None;
     }
-    let open = parse_f64(item.open.as_ref()).unwrap_or(close);
-    let high = parse_f64(item.high.as_ref()).unwrap_or(close.max(open));
-    let low = parse_f64(item.low.as_ref()).unwrap_or(close.min(open));
-    let amount = parse_f64(item.amount.as_ref()).unwrap_or(0.0).max(0.0);
-    // 直接用接口 changeRate，不自行用价差推算
-    let change_pct = parse_f64(item.change_rate.as_ref()).unwrap_or(0.0);
 
-    let date = item
+    let local_date = item
         .local_date
-        .as_deref()
-        .and_then(|s| s.get(0..10))
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| format!("{trade_date} 00:00:00"));
+
+    let trade_date = local_date
+        .get(0..10)
         .filter(|d| d.len() == 10)
         .unwrap_or(trade_date)
         .to_string();
 
-    Some(StockDailyData {
+    let quote_ts = item.timestamp.unwrap_or_else(|| {
+        // 无 timestamp 时用本机毫秒，避免主键冲突时尽量错开
+        Utc::now().timestamp_millis()
+    });
+
+    Some(RealtimeSnapshot {
         symbol: symbol.to_string(),
-        date,
-        open: if open > 0.0 { open } else { close },
-        high: if high > 0.0 { high } else { close },
-        low: if low > 0.0 { low } else { close },
-        close_price: close,
-        amount,
-        change_pct,
+        quote_ts,
+        local_date,
+        trade_date,
+        fetched_at: fetched_at.to_string(),
+        name: item.name.clone().filter(|s| !s.is_empty()),
+        trade_status: item.trade_status.clone().filter(|s| !s.is_empty()),
+        price,
+        open: flex(&item.open),
+        high: flex(&item.high),
+        low: flex(&item.low),
+        pre_close: flex(&item.pre_close),
+        volume: flex(&item.volume),
+        amount: flex(&item.amount),
+        change_amt: flex(&item.change),
+        change_rate: flex(&item.change_rate),
+        high_limit: flex(&item.high_limit),
+        low_limit: flex(&item.low_limit),
+        turnover: flex(&item.turnover),
+        vol_ratio: flex(&item.vol_ratio),
+        amplitude: flex(&item.amplitude),
+        active_buy_vol: flex(&item.active_buy_vol),
+        active_sell_vol: flex(&item.active_sell_vol),
+        net_inflow: flex(&item.net_inflow),
+        mkt_cap: flex(&item.mkt_cap),
+        float_cap: flex(&item.float_cap),
     })
 }

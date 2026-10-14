@@ -1,7 +1,10 @@
 use sea_orm::{ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, DbErr};
 use tracing::info;
 
-const INIT_SQL: &str = include_str!("../migrations/20260721000001_init.sql");
+const MIGRATIONS: &[&str] = &[
+    include_str!("../migrations/20260721000001_init.sql"),
+    include_str!("../migrations/20261014000001_market_realtime_snapshot.sql"),
+];
 
 /// 初始化 PostgreSQL 连接，并确保 schema 已就绪。
 pub async fn init_db(database_url: &str) -> anyhow::Result<DatabaseConnection> {
@@ -15,8 +18,10 @@ pub async fn init_db(database_url: &str) -> anyhow::Result<DatabaseConnection> {
 }
 
 async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
-    for stmt in split_sql_statements(INIT_SQL) {
-        db.execute_unprepared(&stmt).await?;
+    for sql in MIGRATIONS {
+        for stmt in split_sql_statements(sql) {
+            db.execute_unprepared(&stmt).await?;
+        }
     }
     info!("数据库 schema 已就绪");
     Ok(())
