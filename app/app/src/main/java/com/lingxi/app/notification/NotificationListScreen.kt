@@ -2,6 +2,7 @@ package com.lingxi.app.notification
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -41,6 +43,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -302,11 +305,14 @@ private fun NotificationCard(
                         onCheckedChange = { onClick() },
                     )
                 }
+                AlertKindTag(kind = alert?.kind)
                 Text(
                     text = item.title,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = if (item.read) FontWeight.Normal else FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = if (alertKindLabel(alert?.kind) != null) 8.dp else 0.dp),
                 )
                 if (!item.read) {
                     Text(
@@ -348,6 +354,31 @@ private fun NotificationCard(
             }
         }
     }
+}
+
+private fun alertKindLabel(kind: String?): String? = when (kind) {
+    "intraday_alert" -> "趋势"
+    "intraday_oversold" -> "超跌"
+    else -> null
+}
+
+@Composable
+private fun AlertKindTag(kind: String?) {
+    val label = alertKindLabel(kind) ?: return
+    val (bg, fg) = when (kind) {
+        "intraday_oversold" -> MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
+        else -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
+    }
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = fg,
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(bg)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
 }
 
 @Composable
