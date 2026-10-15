@@ -1,7 +1,7 @@
 //! 市场指标 HTTP API
 //! - MSI：`docs/market_sentiment.md`
 //! - MTT：`docs/mid_term_trend.md`
-//! - 日内强势：`docs/intraday_alert.md`
+//! - 日内 TopN（趋势/超跌）：`docs/intraday_alert.md`
 //!
 //! 一律读真实行情：`sc_stock` + `sc_stock_kline_d1_bfq`；
 //! MSI / 日内推送在盘中对最新交易日叠加 Miana 实时行情。
@@ -15,7 +15,7 @@ use crate::error::{AppError, AppResult};
 use super::calculator;
 use super::data_source;
 use super::domain::{MarketDataInput, MsiResult, MttResult};
-use super::intraday_alert::IntradayAlertResult;
+use super::intraday_alert::IntradayAlertBundle;
 use super::intraday_push;
 use super::mid_term;
 use super::miana::MianaClient;
@@ -139,13 +139,13 @@ pub async fn mid_term_trend(
     Ok(Json(result))
 }
 
-/// `GET /api/market/intraday-alerts` — 立即计算一轮（不落库、不推送）。
+/// `GET /api/market/intraday-alerts` — 立即计算趋势/超跌两类（不落库、不推送）。
 #[get("/api/market/intraday-alerts")]
 pub async fn intraday_alerts(
     db: &rocket::State<DatabaseConnection>,
     miana: &rocket::State<MianaClient>,
     cache: &rocket::State<RealtimeDayCache>,
-) -> AppResult<Json<IntradayAlertResult>> {
+) -> AppResult<Json<IntradayAlertBundle>> {
     let result = intraday_push::compute_now(db.inner(), miana.inner(), cache.inner())
         .await
         .map_err(|e| AppError::Internal(e))?;

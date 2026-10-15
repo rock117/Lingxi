@@ -21,14 +21,17 @@ data class IntradayAlertItem(
     val score: Double = 0.0,
     val rs: Double = 0.0,
     @SerialName("change_pct") val changePct: Double = 0.0,
+    @SerialName("drawdown_pct") val drawdownPct: Double = 0.0,
 )
 
 private val payloadJson = Json { ignoreUnknownKeys = true; isLenient = true }
+
+private val knownAlertKinds = setOf("intraday_alert", "intraday_oversold")
 
 fun NotificationItem.parseIntradayAlert(): IntradayAlertPayload? {
     val raw = payload?.trim().orEmpty()
     if (raw.isEmpty()) return null
     return runCatching { payloadJson.decodeFromString<IntradayAlertPayload>(raw) }
         .getOrNull()
-        ?.takeIf { it.kind == "intraday_alert" || it.items.isNotEmpty() }
+        ?.takeIf { it.kind in knownAlertKinds || it.items.isNotEmpty() }
 }

@@ -435,9 +435,16 @@ private fun AlertStockRow(rank: Int, item: IntradayAlertItem) {
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                text = "相对 ${formatSignedPct(item.rs)}",
+                text = if (item.drawdownPct != 0.0) {
+                    "回撤 ${formatSignedPct(item.drawdownPct)}"
+                } else {
+                    "相对 ${formatSignedPct(item.rs)}"
+                },
                 style = MaterialTheme.typography.labelSmall,
-                color = if (item.rs >= 0) {
+                color = if (
+                    (item.drawdownPct != 0.0 && item.drawdownPct >= 0) ||
+                        (item.drawdownPct == 0.0 && item.rs >= 0)
+                ) {
                     MaterialTheme.colorScheme.primary
                 } else {
                     MaterialTheme.colorScheme.error

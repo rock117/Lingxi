@@ -17,8 +17,10 @@ use crate::error::{AppError, AppResult};
 
 /// 短线情绪 MSI。
 pub const KIND_MSI: &str = "msi";
-/// 日内强势股。
+/// 上涨趋势 TopN。
 pub const KIND_INTRADAY_ALERT: &str = "intraday_alert";
+/// 超跌反弹 TopN。
+pub const KIND_INTRADAY_OVERSOLD: &str = "intraday_oversold";
 
 fn memory() -> &'static Mutex<HashMap<&'static str, JsonValue>> {
     static CACHE: OnceLock<Mutex<HashMap<&'static str, JsonValue>>> = OnceLock::new();
@@ -149,4 +151,13 @@ pub async fn store_intraday(
     updated_at: &str,
 ) -> AppResult<()> {
     store_typed(db, KIND_INTRADAY_ALERT, date, result, updated_at).await
+}
+
+pub async fn store_intraday_oversold(
+    db: &DatabaseConnection,
+    date: &str,
+    result: &IntradayAlertResult,
+    updated_at: &str,
+) -> AppResult<()> {
+    store_typed(db, KIND_INTRADAY_OVERSOLD, date, result, updated_at).await
 }

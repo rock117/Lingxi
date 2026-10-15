@@ -45,7 +45,7 @@ Lingxi/
                                                      └──────────────────┘
 ```
 
-- **后台 API**：短线情绪为「今日（纯当日截面）+ 近 N 日日分加权」，请求时现算不落库；盘中今日用 Miana 实时，其余读 `sc_stock` / `sc_stock_kline_d1_bfq`；中期 MTT 仍读库长窗；交易时段每 5 分钟计算日内强势 Top10，经 WebSocket 推送并落库。
+- **后台 API**：短线情绪为「今日（纯当日截面）+ 近 N 日日分加权」，请求时现算不落库；盘中今日用 Miana 实时，其余读 `sc_stock` / `sc_stock_kline_d1_bfq`；中期 MTT 仍读库长窗；交易时段每 5 分钟计算上涨趋势 / 超跌反弹两类 Top10，经 WebSocket 各推一条并落库。
 - **App**：情绪页展示今日 / 近 N 日 / MTT；条件/通知走后端 API；前台服务维持 WebSocket 收推送。
 
 ## 技术栈
@@ -123,7 +123,7 @@ powershell -ExecutionPolicy Bypass -File .\install-debug.ps1 -Logcat
 
 依赖仓库已配置国内镜像（`settings.gradle.kts`：阿里云 / 腾讯云 / 华为云优先，官方兜底）；`gradlew` 的 Gradle 发行包用腾讯云。首次拉 Compose 等大包仍可能较慢，之后有本地缓存会快很多。若仍超时，可用本机 Gradle + `install-debug.bat`。
 
-情绪 / 条件 / 通知均走真实后端；通知经 WebSocket `/ws` 接收（日内强势 Top10 每 5 分钟推送）。  
+情绪 / 条件 / 通知均走真实后端；通知经 WebSocket `/ws` 接收（上涨趋势 / 超跌反弹 Top10 每 5 分钟各推一条）。  
 盘中实时与日内推送需配置 `MIANA_TOKEN`（及可选 `MIANA_BASE_URL` / `MIANA_RATE_LIMIT_PER_MIN`），部署脚本会写入 systemd。  
 设置页默认服务器地址在**构建时**从仓库根目录 `.env` 注入（`app_server_host`，缺省则用 `ssh_server`）；用户改过设置后以 DataStore 为准；情绪刷新间隔默认可在设置页修改。
 
@@ -241,7 +241,7 @@ python script/deploy_backend.py --service-only
 | DELETE | `/api/notifications` | 清空全部通知 |
 | GET | `/api/market/sentiment` | 短线情绪 MSI |
 | GET | `/api/market/mid-term-trend` | 中期趋势 MTT |
-| GET | `/api/market/intraday-alerts` | 日内强势 Top10（即时计算，不推送） |
-| WS | `/ws` | WebSocket 推送（含日内强势通知） |
+| GET | `/api/market/intraday-alerts` | `{ trend, oversold }` 两类 Top10（即时计算，不推送） |
+| WS | `/ws` | WebSocket 推送（含趋势 / 超跌通知） |
 
 更多细节（数据模型、条件表达式格式等）见 [PLAN.md](./PLAN.md)。

@@ -1,4 +1,4 @@
-# 日内强势股推送（Intraday Alert）
+# 日内 TopN 推送（趋势 / 超跌）
 
 > **本文档为规范（Source of Truth）。**  
 > 实现：`backend/src/market/intraday_alert.rs`、`intraday_push.rs`。  
@@ -8,12 +8,14 @@
 
 ## 1. 目标
 
-交易时段内每 **5 分钟**：
+交易时段内每 **5 分钟** 各算一类 Top10，**分别推送两条通知**：
 
-1. 找出相对大盘强势的个股  
-2. 结合近 5 个已收盘交易日日 K  
-3. 综合「买入后更可能续涨」的日内质量  
-4. 取 **得分最高 10 只**，经 **WebSocket** `/ws` 推送（并落库 `notification`）
+| 类型 | kind | 含义 |
+|---|---|---|
+| **上涨趋势** | `intraday_alert` | 相对大盘强势 + 五日结构 + 买点/量价比，偏续涨 |
+| **超跌反弹** | `intraday_oversold` | **多日回撤为主** + 当日杀跌为辅，排名越前越「跌无可跌」、反弹概率相对更大 |
+
+两类独立筛选，允许同一标的同时出现在两份列表（极少见）。
 
 ---
 
@@ -22,110 +24,175 @@
 | 项 | 值 |
 |---|---|
 | 间隔 | 300 秒 |
-| 时段 | 仅开市日连续竞价窗内重算、落库并推送；非交易时段不推（避免重复刷屏） |
-| 数据 | `load_market_window_hybrid(db, 6, …)`：近 5 个开市日（`is_open` 且 ≤ 今日）；竞价时段叠加当日 Miana（`/api/stock/v3/realtime`，非企业版全市场接口） |
-| 原始行情 | 每次未命中内存 TTL 的拉取写入 `market_realtime_snapshot`（主键 `(symbol, quote_ts)`，含市值等；一天多条） |
-| 缓存 | 表 `market_result_cache`（`kind=intraday_alert`，主键 `(kind, date)`，`payload` JSONB；盘中写入） |
-| 通道 | `PushMessage { type: "notification", data: NotificationItem }` |
-
-开市竞价未配置 `MIANA_TOKEN`、本轮无达标标的、或与上一条推送 `payload` 完全相同时打日志并跳过。  
-App 列表也会按内容指纹去重（同日相同 Top 截面只显示最新一条）。
+| 时段 | 仅开市日连续竞价窗内重算、落库并推送；非交易时段不推 |
+| 数据 | `load_market_window_hybrid(db, 6, …)`：近 5 个开市日 + 当日实时 |
+| 原始行情 | `market_realtime_snapshot`（`(symbol, quote_ts)`） |
+| 缓存 | `market_result_cache`：`kind=intraday_alert` 与 `kind=intraday_oversold`，主键 `(kind, date)` |
+| 通道 | 各一条 `PushMessage { type: "notification", … }`；按各自 `condition_id` 与上一条 `payload` 去重 |
 
 ---
 
-## 3. 常量
+## 3. 共用常量
 
 | 符号 | 值 | 含义 |
 |---|---|---|
-| `DELTA_MIN` | `1.2` | 相对大盘最少超额（百分点） |
 | `AMOUNT_MIN` | `3e7` | 成交额下限（元） |
-| `PRESELECT_K` | `150` | 初筛后进入 5 日评分的上限 |
-| `LIMIT_PCT` | `9.5` | 涨停近似阈值；≥ 此值剔除（买不进） |
-| `W_A / W_B / W_C` | `0.40 / 0.35 / 0.25` | 相对强度 / 五日 / 买点 |
-| `SCORE_MIN` | `55` | Top10 最低分门槛 |
-| `RS_CAP` | `5.0` | 相对强度封顶（百分点） |
+| `PRESELECT_K` | `150` | 初筛上限 |
+| `LIMIT_PCT` | `9.5` | 近涨停/近跌停近似阈值（买不进） |
+| `SCORE_MIN` | `55` | 上涨趋势 Top10 最低分 |
+| `SCORE_MIN_OVERSOLD` | `50` | 超跌 Top10 最低分 |
+| `DELTA_MIN` | `1.2` | 相对大盘最少超额/弱势（百分点） |
+| `RS_CAP` | `5.0` | RS 映射封顶 |
+| `VP_LO / VP_HI` | `1.5e7 / 5e8` | 量价比 log 映射界 |
+| `W_A / W_B / W_C` | `0.35 / 0.30 / 0.35` | 趋势：相对强度 / 五日 / 买点 |
+| `WO_A / WO_B / WO_C` | `0.50 / 0.30 / 0.20` | 超跌：回撤 / 当日弱势 / 杀跌量能 |
+| `DD_MIN / DD_DEEP` | `-8 / -28` | 超跌最少回撤；满分回撤深度 |
+| `OVERSOLD_HIST_MIN` | `3` | 超跌最少已收盘日 K 根数 |
 
-大盘基准：有效样本等权均涨跌幅 \(R_{mkt}\)（**不含** \(R_i \ge LIMIT_PCT\) 的近涨停票，以免极值抬高基准）。
+大盘 \(R_{mkt}\)：有效样本等权均涨跌幅（**不含** \(R_i \ge LIMIT_PCT\) 或 \(R_i \le -LIMIT_PCT\)）。
+
+基础有效票：成交额 ≥ `AMOUNT_MIN`、OHLC 有效、价 ≥ 2、涨跌幅有限。
 
 ---
 
-## 4. 过滤
+## 4. 上涨趋势（`intraday_alert`）
 
-剔除：成交额 `< AMOUNT_MIN`、涨跌幅非有限、\(R_i \le 0\)、\(R_i \ge LIMIT_PCT\)、OHLC 无效、价格 `< 2`。
+### 4.1 过滤
 
-相对强度：
+\(R_i > 0\)、\(R_i < LIMIT_PCT\)、\(RS_i = R_i - R_{mkt} \ge DELTA_MIN\)；按 \(RS\) 取前 `PRESELECT_K`。
+
+### 4.2 得分（0–100）
 
 \[
-RS_i = R_i - R_{mkt}
+score = 0.35\,A + 0.30\,B + 0.35\,C
 \]
 
-保留 \(RS_i \ge DELTA_MIN\)，按 \(RS\) 取前 `PRESELECT_K`。
-
----
-
-## 5. 三层得分（均映射到 \([0,100]\)）
-
-### 5.1 A — 相对大盘
+**A — 相对强度**
 
 \[
 A = 100 \cdot \mathrm{clip}\big((RS_i - DELTA_MIN) / (RS_CAP - DELTA_MIN),\,0,\,1\big)
 \]
 
-日内位置微调：\(pos=(P-L)/(H-L)\)；\(pos>0.7\) 时 \(A \mathrel{+}= 5\)（上限 100）。
+\(pos=(P-L)/(H-L)>0.7\) 时 \(A \mathrel{+}= 5\)（上限 100）。
 
-### 5.2 B — 近 5 日 K
-
-对候选股取近 5 个**已收盘**日（不含今日实时）：
+**B — 近 5 日 K**（已收盘，不含今日）
 
 | 子项 | 权重 | 要点 |
 |---|---|---|
-| B1 五日收益 | 0.35 | \(R_{5d}=(C_{-1}/C_{-5}-1)\times100\)；\([2,12]\) 满分，过高/过低降分 |
-| B2 站上 MA5 | 0.25 | \(C_{-1}\) 相对 MA5 |
-| B3 波动 | 0.20 | 五日均振幅适中加分 |
-| B4 量能 | 0.15 | 末日额 / 前几日均额 ∈ `[1.1, 2.5]` 最佳 |
-| B5 阳线抬高 | 0.05 | 近 3 日至少 2 根阳线 |
+| B1 五日收益 | 0.35 | \(R_{5d}\) ∈ `[2,12]` 满分 |
+| B2 站上 MA5 | 0.25 | |
+| B3 波动 | 0.20 | 振幅适中 |
+| B4 量能 | 0.15 | 末日额/前均 ∈ `[1.1,2.5]` |
+| B5 阳线抬高 | 0.05 | |
 
-缺 5 日 K 的票：\(B=40\)（降权但不直接淘汰）。
+缺 5 日：\(B=40\)。
 
-### 5.3 C — 日内买点质量
-
-| 子项 | 权重 | 要点 |
-|---|---|---|
-| C1 剩余空间 | 0.30 | \(LIMIT_PCT - R_i\)，约 `[1.5,6]` 最佳 |
-| C2 回流区 | 0.30 | \(pos\in[0.35,0.65]\) 高；过冲高（>0.9）降 |
-| C3 回吐 | 0.25 | \(giveback \approx (H-P)/P_{prev}\times100\)；回吐大降分 |
-| C4 流动性 | 0.15 | \(\log\) 饱和成交额 |
-
-### 5.4 合成
+**C — 买点 + 量价比**
 
 \[
-score = W_A A + W_B B + W_C C
+VP_i = \mathrm{amount}_i / \max(R_i,\varepsilon),\quad
+C5 = 100\cdot\mathrm{clip}\frac{\ln VP_i-\ln VP_{LO}}{\ln VP_{HI}-\ln VP_{LO}}
 \]
 
-排序：`score` ↓，同分 `RS` ↓，再同分 `amount` ↓。  
-取前 10 且 \(score \ge SCORE_MIN\)。
+| 子项 | 权重 | 要点 |
+|---|---|---|
+| C1 剩余空间 | 0.20 | \(h=LIMIT_PCT-R_i\)；\(C1=100\cdot\mathrm{clip}((h-0.5)/5)\) |
+| C2 回流区 | 0.20 | \(pos\in[0.35,0.65]\)→100；邻域 70；\(pos>0.9\)→35；其余 50 |
+| C3 回吐 | 0.15 | \(giveback=(H-P)/P_{prev}\times100\)；&lt;1→100；&lt;3 线性降；否则 30 |
+| C4 绝对流动性 | 0.10 | \(C4=100\cdot\mathrm{clip}((\ln amount-\ln AMOUNT_MIN)/3)\) |
+| **C5 量价比** | **0.35** | 同上 \(C5\)；同涨幅成交额越大越好 |
+
+排序：`score` ↓，`RS` ↓，`amount` ↓；取前 10 且 \(score\ge SCORE_MIN\)。
+
+推送标题：`上涨趋势 Top{N}`；系统条件名「上涨趋势股」。
+
+---
+
+## 5. 超跌反弹（`intraday_oversold`）
+
+多日回撤为主、当日杀跌为辅；**越超跌（回撤越深）得分越高**。
+
+### 5.1 回撤定义
+
+取近最多 5 个已收盘日的最高价 \(H_{peak}=\max high\)，今日收盘（实时价）\(P\)：
+
+\[
+DD_i = (P / H_{peak} - 1)\times 100
+\quad\text{（百分点，通常为负）}
+\]
+
+### 5.2 过滤
+
+- 当日 \(R_i < 0\) 且 \(R_i > -LIMIT_PCT\)（下跌但非近跌停）  
+- 至少 3 根历史日 K，且 \(DD_i \le DD_{MIN}\)（默认 \(DD_{MIN}=-8\)，至少回撤 8%）  
+- 按 \(|DD|\) 取前 `PRESELECT_K`
+
+### 5.3 得分
+
+\[
+score = 0.50\,A + 0.30\,B + 0.20\,C
+\]
+
+**A — 多日回撤深度（主，0.50）**
+
+\(DD\) 从 \(DD_{MIN}=-8\) 到 \(DD_{DEEP}=-28\) 线性映射到 0–100（更深 → 更高）：
+
+\[
+A = 100 \cdot \mathrm{clip}\big((DD_{MIN} - DD_i) / (DD_{MIN} - DD_{DEEP}),\,0,\,1\big)
+\]
+
+**B — 当日弱势（辅，0.30）**
+
+\[
+RS_i = R_i - R_{mkt}
+\]
+
+\[
+B_{rs} = 100 \cdot \mathrm{clip}\big((-RS_i - DELTA_MIN) / RS_CAP,\,0,\,1\big)
+\]
+
+日内位置 \(B_{pos}\)（贴日低更好，已反抽降权）：
+
+| \(pos\) | \(B_{pos}\) |
+|---|---|
+| \(\le 0.35\) | 100 |
+| \(\le 0.55\) | 70 |
+| \(\le 0.70\) | 45 |
+| \(> 0.70\) | 25 |
+
+\[
+B = 0.75\,B_{rs} + 0.25\,B_{pos}
+\]
+
+**C — 杀跌量能（0.20）**
+
+下跌日量价比 \(VP^{down}=\mathrm{amount}/\max(|R_i|,\varepsilon)\)，log 映射同趋势侧 \(VP_{LO}/VP_{HI}\)（放量杀跌更像出清）。
+
+排序：`score` ↓，`|DD|` ↓，`amount` ↓；取前 10 且 \(score\ge SCORE_MIN_OVERSOLD\)。
+
+推送标题：`超跌反弹 Top{N}`；系统条件名「超跌反弹股」。  
+`items[].drawdown_pct` 写入 \(DD_i\)；`reason` 含 `DD=…`。
+
+常量：`DD_MIN=-8`，`DD_DEEP=-28`。
 
 ---
 
 ## 6. 推送载荷
 
-落库并广播一条通知：
+每条通知：
 
-- `title`: `日内强势 Top10`  
-- `body`: 多行摘要（系统通知用），含简称：`大盘等权` + 前 5 名  
-- `payload`: JSON，含 `r_mkt`、`items[]`（`symbol` / `name` / `score` / `rs` / …）  
-- `condition_id`: 系统条件 `kind=intraday_alert`（启动时确保存在）
-
-App 通知列表：解析 `payload` 做结构化行；**默认收起前 3 名，点卡片展开全部**，展开时标记已读。
+- `payload.kind`：`intraday_alert` 或 `intraday_oversold`  
+- `payload`：`date` / `r_mkt` / `sample_size` / `candidate_size` / `items[]`  
+- App：解析两类 payload；默认收起前 3 名，展开全部并标已读  
 
 ---
 
 ## 7. API（调试）
 
-`GET /api/market/intraday-alerts`：立即用当前截面算一轮（不强制落库推送；实现可选择与推送共用计算函数）。
+`GET /api/market/intraday-alerts` → `{ "trend": …, "oversold": … }`（即时计算，不推送）。
 
 ---
 
 ## 8. 定位
 
-相对强度排序工具，**非投资建议**。不保证买入后上涨。
+筛选工具，**非投资建议**。不保证续涨或反弹。

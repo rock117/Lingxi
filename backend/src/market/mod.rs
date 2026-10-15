@@ -2,7 +2,7 @@
 //!
 //! - MSI 短线情绪：`docs/market_sentiment.md`
 //! - MTT 中期趋势：`docs/mid_term_trend.md`
-//! - 日内强势推送：`docs/intraday_alert.md`
+//! - 日内 TopN（趋势/超跌）推送：`docs/intraday_alert.md`
 //!
 //! 算法变更须先改文档再改代码。
 

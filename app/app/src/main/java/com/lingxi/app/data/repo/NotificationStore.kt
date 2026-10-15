@@ -73,16 +73,17 @@ object NotificationStore {
     }
 
     /**
-     * 日内强势：同日 + 相同 Top 标的/得分视为重复；
+     * 趋势/超跌：同 kind + 同日 + 相同 Top 标的/得分视为重复；
      * 其它：标题+正文相同视为重复。
      */
     internal fun contentKey(item: NotificationItem): String {
         val alert = item.parseIntradayAlert()
         if (alert != null && alert.date.isNotBlank()) {
+            val kind = alert.kind.ifBlank { "intraday_alert" }
             val sig = alert.items.joinToString("|") { row ->
                 "${row.symbol}:${"%.2f".format(row.score)}"
             }
-            return "intraday:${alert.date}:$sig"
+            return "intraday:$kind:${alert.date}:$sig"
         }
         return "plain:${item.title}\u0000${item.body}"
     }
