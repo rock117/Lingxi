@@ -6,14 +6,12 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use super::domain::{MarketDataInput, StockDailyData};
+use super::session::SessionPhase;
 
 const DELTA_MIN: f64 = 1.2;
 const AMOUNT_MIN: f64 = 3.0e7;
 const PRESELECT_K: usize = 150;
 const LIMIT_PCT: f64 = 9.5;
-const W_A: f64 = 0.35;
-const W_B: f64 = 0.30;
-const W_C: f64 = 0.35;
 const SCORE_MIN: f64 = 55.0;
 const SCORE_MIN_OVERSOLD: f64 = 52.0;
 const RS_CAP: f64 = 5.0;
@@ -22,10 +20,6 @@ const VP_LO: f64 = 1.5e7;
 const VP_HI: f64 = 5.0e8;
 /// 超跌入选：至少回撤 8%。
 const DD_MIN: f64 = -8.0;
-/// 超跌：回撤质量 / 企稳 / 量能。
-const WO_A: f64 = 0.25;
-const WO_B: f64 = 0.45;
-const WO_C: f64 = 0.30;
 /// 超跌回看已收盘日数（峰值/坏趋势/量能对比）。
 const OVERSOLD_LOOKBACK: usize = 10;
 const OVERSOLD_HIST_MIN: usize = 5;
@@ -63,6 +57,9 @@ pub struct IntradayAlertResult {
     pub r_mkt: f64,
     pub sample_size: usize,
     pub candidate_size: usize,
+    /// 盘中相位：`open` / `am_active` / … / `close` / `off`
+    #[serde(default)]
+    pub session_phase: String,
     pub items: Vec<AlertItem>,
 }
 
@@ -281,6 +278,7 @@ fn empty_result(date: String) -> IntradayAlertResult {
         r_mkt: 0.0,
         sample_size: 0,
         candidate_size: 0,
+        session_phase: SessionPhase::now().as_str().into(),
         items: vec![],
     }
 }
@@ -438,15 +436,27 @@ fn score_oversold_c(s: &StockDailyData, hist: Option<&[&StockDailyData]>) -> f64
 
 /// 上涨趋势 TopN。
 pub fn calculate_intraday_alerts(input: &MarketDataInput) -> IntradayAlertResult {
+    calculate_intraday_alerts_at(input, SessionPhase::now())
+}
+
+pub fn calculate_intraday_alerts_at(
+    input: &MarketDataInput,
+    phase: SessionPhase,
+) -> IntradayAlertResult {
     let Some(today) = input.snapshots.last() else {
         return empty_result(String::new());
     };
     let date = today.date.clone();
+    let phase_s = phase.as_str().to_string();
+    let pw = phase.trend_weights();
+    let score_min = SCORE_MIN + pw.score_floor_boost;
 
     let valid: Vec<&StockDailyData> = today.stocks.iter().filter(|s| valid_stock(s)).collect();
     let sample_size = valid.len();
     if sample_size == 0 {
-        return empty_result(date);
+        let mut r = empty_result(date);
+        r.session_phase = phase_s;
+        return r;
     }
 
     let r_mkt = r_mkt_of(&valid);
@@ -475,7 +485,7 @@ pub fn calculate_intraday_alerts(input: &MarketDataInput) -> IntradayAlertResult
         let a = score_a(rs, s);
         let b = score_b(hist);
         let c = score_c(s);
-        let score = W_A * a + W_B * b + W_C * c;
+        let score = pw.w_a * a + pw.w_b * b + pw.w_c * c;
         scored.push(AlertItem {
             symbol: s.symbol.clone(),
             name: String::new(),
@@ -485,7 +495,7 @@ pub fn calculate_intraday_alerts(input: &MarketDataInput) -> IntradayAlertResult
             amount: s.amount,
             drawdown_pct: 0.0,
             layers: AlertLayers { a, b, c },
-            reason: build_reason(a, b, c, rs),
+            reason: format!("{} phase={}", build_reason(a, b, c, rs), phase.as_str()),
         });
     }
 
@@ -499,7 +509,7 @@ pub fn calculate_intraday_alerts(input: &MarketDataInput) -> IntradayAlertResult
 
     let items: Vec<AlertItem> = scored
         .into_iter()
-        .filter(|i| i.score >= SCORE_MIN)
+        .filter(|i| i.score >= score_min)
         .take(10)
         .collect();
 
@@ -508,21 +518,34 @@ pub fn calculate_intraday_alerts(input: &MarketDataInput) -> IntradayAlertResult
         r_mkt,
         sample_size,
         candidate_size,
+        session_phase: phase_s,
         items,
     }
 }
 
 /// 超跌反弹 TopN：入选看超跌，排序看企稳。
 pub fn calculate_oversold_alerts(input: &MarketDataInput) -> IntradayAlertResult {
+    calculate_oversold_alerts_at(input, SessionPhase::now())
+}
+
+pub fn calculate_oversold_alerts_at(
+    input: &MarketDataInput,
+    phase: SessionPhase,
+) -> IntradayAlertResult {
     let Some(today) = input.snapshots.last() else {
         return empty_result(String::new());
     };
     let date = today.date.clone();
+    let phase_s = phase.as_str().to_string();
+    let pw = phase.oversold_weights();
+    let score_min = SCORE_MIN_OVERSOLD + pw.score_floor_boost;
 
     let valid: Vec<&StockDailyData> = today.stocks.iter().filter(|s| valid_stock(s)).collect();
     let sample_size = valid.len();
     if sample_size == 0 {
-        return empty_result(date);
+        let mut r = empty_result(date);
+        r.session_phase = phase_s;
+        return r;
     }
 
     let r_mkt = r_mkt_of(&valid);
@@ -558,7 +581,7 @@ pub fn calculate_oversold_alerts(input: &MarketDataInput) -> IntradayAlertResult
         let a = score_oversold_a(dd);
         let b = score_oversold_b(rs, s, hist);
         let c = score_oversold_c(s, hist);
-        let score = WO_A * a + WO_B * b + WO_C * c;
+        let score = pw.w_a * a + pw.w_b * b + pw.w_c * c;
         scored.push(AlertItem {
             symbol: s.symbol.clone(),
             name: String::new(),
@@ -569,8 +592,12 @@ pub fn calculate_oversold_alerts(input: &MarketDataInput) -> IntradayAlertResult
             drawdown_pct: dd,
             layers: AlertLayers { a, b, c },
             reason: format!(
-                "DD={:+.1}% stab={:.0} RS={:+.1}% R={:+.1}%",
-                dd, b, rs, s.change_pct
+                "DD={:+.1}% stab={:.0} RS={:+.1}% R={:+.1}% phase={}",
+                dd,
+                b,
+                rs,
+                s.change_pct,
+                phase.as_str()
             ),
         });
     }
@@ -585,7 +612,7 @@ pub fn calculate_oversold_alerts(input: &MarketDataInput) -> IntradayAlertResult
 
     let items: Vec<AlertItem> = scored
         .into_iter()
-        .filter(|i| i.score >= SCORE_MIN_OVERSOLD)
+        .filter(|i| i.score >= score_min)
         .take(10)
         .collect();
 
@@ -594,14 +621,16 @@ pub fn calculate_oversold_alerts(input: &MarketDataInput) -> IntradayAlertResult
         r_mkt,
         sample_size,
         candidate_size,
+        session_phase: phase_s,
         items,
     }
 }
 
 pub fn calculate_alert_bundle(input: &MarketDataInput) -> IntradayAlertBundle {
+    let phase = SessionPhase::now();
     IntradayAlertBundle {
-        trend: calculate_intraday_alerts(input),
-        oversold: calculate_oversold_alerts(input),
+        trend: calculate_intraday_alerts_at(input, phase),
+        oversold: calculate_oversold_alerts_at(input, phase),
     }
 }
 
