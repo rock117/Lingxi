@@ -9,17 +9,23 @@ import com.lingxi.app.data.model.CreateConditionRequest
 import com.lingxi.app.data.model.ScreenRequest
 import com.lingxi.app.data.model.ScreenResult
 import com.lingxi.app.data.model.StrategyDef
+import com.lingxi.app.data.model.UpdateConditionRequest
 import com.lingxi.app.data.prefs.ServerPrefs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 class ScreenViewModel(application: Application) : AndroidViewModel(application) {
@@ -52,12 +58,16 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
             runCatching {
                 val api = ApiClient.create(prefs.configFlow.first())
                 _strategies.value = api.listStrategies()
-                _savedScreens.value = api.listConditions().filter { it.kind == "screen" }
+                _savedScreens.value = api.listConditions()
+                    .filter { it.kind == "screen" }
+                    .sortedByDescending { it.id }
             }.onFailure {
                 _error.value = it.message ?: "加载失败"
             }
         }
     }
+
+    fun findSaved(id: Long): Condition? = _savedScreens.value.find { it.id == id }
 
     fun clearError() {
         _error.value = null
@@ -127,6 +137,46 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun updateScreen(id: Long, name: String, rules: List<JsonObject>, enabled: Boolean = true) {
+        viewModelScope.launch {
+            _loading.value = true
+            _error.value = null
+            runCatching {
+                val api = ApiClient.create(prefs.configFlow.first())
+                val expression = buildExpression(rules)
+                api.updateCondition(
+                    id,
+                    UpdateConditionRequest(
+                        name = name,
+                        kind = "screen",
+                        symbol = null,
+                        expression = expression.toString(),
+                        enabled = enabled,
+                    ),
+                )
+                _lastSavedId.value = id
+                refresh()
+            }.onFailure {
+                _error.value = it.message ?: "保存失败"
+            }
+            _loading.value = false
+        }
+    }
+
+    fun renameSaved(id: Long, name: String) {
+        viewModelScope.launch {
+            runCatching {
+                val api = ApiClient.create(prefs.configFlow.first())
+                val saved = api.updateCondition(id, UpdateConditionRequest(name = name))
+                _savedScreens.value = _savedScreens.value
+                    .map { if (it.id == id) saved else it }
+                    .sortedByDescending { it.id }
+            }.onFailure {
+                _error.value = it.message ?: "重命名失败"
+            }
+        }
+    }
+
     fun deleteSaved(id: Long) {
         viewModelScope.launch {
             runCatching {
@@ -152,10 +202,40 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
         return JsonObject(map)
     }
 
+    fun parseRules(expression: String): List<JsonObject> = Companion.parseRules(expression)
+
     private fun buildExpression(rules: List<JsonObject>) = buildJsonObject {
         put("op", "and")
         put("rules", buildJsonArray {
             rules.forEach { add(it) }
         })
+    }
+
+    companion object {
+        private val json = Json { ignoreUnknownKeys = true }
+
+        fun parseRules(expression: String): List<JsonObject> = runCatching {
+            val root = json.parseToJsonElement(expression)
+            when {
+                root is JsonObject && root.containsKey("rules") -> {
+                    root["rules"]?.jsonArray?.mapNotNull { el ->
+                        el as? JsonObject
+                    }.orEmpty()
+                }
+                root is JsonObject && root.containsKey("type") -> listOf(root)
+                root is JsonArray -> root.mapNotNull { it as? JsonObject }
+                else -> emptyList()
+            }
+        }.getOrDefault(emptyList())
+
+        fun ruleSummary(expression: String, catalog: List<StrategyDef>): String {
+            val rules = parseRules(expression)
+            if (rules.isEmpty()) return "无规则"
+            val names = rules.map { rule ->
+                val tid = rule["type"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                catalog.find { it.typeId == tid }?.name ?: tid.ifBlank { "规则" }
+            }
+            return "${names.size} 条 · " + names.joinToString(" · ")
+        }
     }
 }

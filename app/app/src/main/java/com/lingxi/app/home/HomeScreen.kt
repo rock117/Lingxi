@@ -42,6 +42,7 @@ fun HomeScreen(
     notificationViewModel: NotificationViewModel,
     onOpenSettings: () -> Unit,
     onComposeScreen: (String?) -> Unit,
+    onEditScreen: (Long) -> Unit,
     onRunScreen: (Long) -> Unit,
 ) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -114,6 +115,7 @@ fun HomeScreen(
                 1 -> StrategyListScreen(
                     viewModel = screenViewModel,
                     onComposeFrom = onComposeScreen,
+                    onEditSaved = onEditScreen,
                     onRunSaved = onRunScreen,
                 )
                 else -> NotificationListScreen(viewModel = notificationViewModel)

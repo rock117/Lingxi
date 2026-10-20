@@ -40,6 +40,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lingxi.app.data.model.StrategyDef
 import com.lingxi.app.viewmodel.ScreenViewModel
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -49,6 +50,7 @@ import kotlinx.serialization.json.jsonPrimitive
 fun ScreenComposeScreen(
     viewModel: ScreenViewModel,
     initialTypeId: String?,
+    editId: Long?,
     onBack: () -> Unit,
     onSavedAndRun: (Long) -> Unit,
     onPreviewDone: () -> Unit,
@@ -62,9 +64,19 @@ fun ScreenComposeScreen(
     var name by remember { mutableStateOf("") }
     var showPicker by remember { mutableStateOf(false) }
     var seeded by remember { mutableStateOf(false) }
+    val editing = editId != null && editId > 0
 
-    LaunchedEffect(strategies, initialTypeId) {
-        if (!seeded && strategies.isNotEmpty()) {
+    val savedScreens by viewModel.savedScreens.collectAsStateWithLifecycle()
+
+    LaunchedEffect(strategies, initialTypeId, editId, savedScreens) {
+        if (seeded) return@LaunchedEffect
+        if (editing) {
+            val existing = viewModel.findSaved(editId!!) ?: return@LaunchedEffect
+            seeded = true
+            name = existing.name
+            rules.clear()
+            rules.addAll(viewModel.parseRules(existing.expression))
+        } else if (strategies.isNotEmpty()) {
             seeded = true
             val seed = initialTypeId?.let { id -> strategies.find { it.typeId == id } }
             if (seed != null) {
@@ -84,7 +96,7 @@ fun ScreenComposeScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("组合选股策略") },
+                title = { Text(if (editing) "编辑策略" else "新建策略") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -127,7 +139,7 @@ fun ScreenComposeScreen(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Icon(Icons.Default.Add, contentDescription = null)
-                Text(if (showPicker) "收起策略库" else "添加策略")
+                Text(if (showPicker) "收起原子策略" else "添加原子策略")
             }
 
             if (showPicker) {
@@ -165,12 +177,16 @@ fun ScreenComposeScreen(
             Button(
                 onClick = {
                     val n = name.trim().ifBlank { "组合策略" }
-                    viewModel.saveScreen(n, rules.toList())
+                    if (editing) {
+                        viewModel.updateScreen(editId!!, n, rules.toList())
+                    } else {
+                        viewModel.saveScreen(n, rules.toList())
+                    }
                 },
                 enabled = !loading && rules.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("保存并选股")
+                Text(if (editing) "保存并选股" else "创建并选股")
             }
         }
     }
@@ -206,10 +222,11 @@ private fun RuleEditorCard(
                     "enum" -> {
                         Text(param.label, style = MaterialTheme.typography.labelMedium)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            val curVal = current?.jsonPrimitive?.contentOrNull
+                                ?: current?.jsonPrimitive?.booleanOrNull?.toString()
                             param.options.orEmpty().forEach { opt ->
-                                val selected = current?.jsonPrimitive?.contentOrNull == opt.value
                                 FilterChip(
-                                    selected = selected,
+                                    selected = curVal == opt.value,
                                     onClick = {
                                         onChange(applyParam(rule, param.key, opt.value, false))
                                     },

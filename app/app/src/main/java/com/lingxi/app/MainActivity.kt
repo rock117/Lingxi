@@ -102,6 +102,9 @@ private fun LingxiNav(
                 onComposeScreen = { typeId ->
                     navController.navigate(Routes.screenCompose(typeId))
                 },
+                onEditScreen = { id ->
+                    navController.navigate(Routes.screenEdit(id))
+                },
                 onRunScreen = { id ->
                     screenViewModel.clearResult()
                     navController.navigate(Routes.screenResult(id))
@@ -123,10 +126,30 @@ private fun LingxiNav(
             ScreenComposeScreen(
                 viewModel = screenViewModel,
                 initialTypeId = typeId,
+                editId = null,
                 onBack = { navController.popBackStack() },
                 onSavedAndRun = { id ->
                     navController.popBackStack()
                     navController.navigate(Routes.screenResult(id))
+                },
+                onPreviewDone = {
+                    navController.navigate(Routes.screenResult(null))
+                },
+            )
+        }
+        composable(
+            route = Routes.SCREEN_EDIT,
+            arguments = listOf(navArgument("id") { type = NavType.LongType }),
+        ) { entry ->
+            val id = entry.arguments?.getLong("id") ?: 0L
+            ScreenComposeScreen(
+                viewModel = screenViewModel,
+                initialTypeId = null,
+                editId = id,
+                onBack = { navController.popBackStack() },
+                onSavedAndRun = { savedId ->
+                    navController.popBackStack()
+                    navController.navigate(Routes.screenResult(savedId))
                 },
                 onPreviewDone = {
                     navController.navigate(Routes.screenResult(null))

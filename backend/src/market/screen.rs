@@ -9,7 +9,7 @@ use super::domain::{MarketDataInput, StockDailyData};
 
 const AMOUNT_MIN: f64 = 3.0e7;
 const LIMIT_PCT: f64 = 9.5;
-const LOOKBACK_DAYS: usize = 60;
+const LOOKBACK_DAYS: usize = 120;
 
 /// 策略参数字段（供 App 动态表单）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -267,6 +267,55 @@ pub fn strategy_catalog() -> Vec<StrategyDef> {
                 "max_pct": 7.0
             }),
         },
+        StrategyDef {
+            type_id: "period_return".into(),
+            name: "日/周/月涨跌".into(),
+            summary: "近 N 日/周/月：每桶涨跌 + 总涨跌".into(),
+            params: vec![
+                enum_param(
+                    "timeframe",
+                    "周期",
+                    "day",
+                    &[("day", "日"), ("week", "周"), ("month", "月")],
+                ),
+                num_param("n", "回看桶数", 5.0, 1.0, 60.0),
+                enum_param(
+                    "period_mode",
+                    "每桶模式",
+                    "all_in_range",
+                    &[
+                        ("all_in_range", "全部在区间"),
+                        ("all_up", "全部上涨"),
+                        ("all_down", "全部下跌"),
+                        ("majority", "多数达标"),
+                        ("avg_in_range", "均值在区间"),
+                    ],
+                ),
+                num_param("period_min_pct", "每桶最小%", 0.0, -50.0, 50.0),
+                num_param("period_max_pct", "每桶最大%(≥900不限)", 900.0, -50.0, 999.0),
+                num_param("total_min_pct", "总涨跌最小%", 8.0, -90.0, 200.0),
+                num_param("total_max_pct", "总涨跌最大%(≥900不限)", 900.0, -90.0, 999.0),
+                num_param("min_up_count", "多数达标桶数", 4.0, 1.0, 60.0),
+                enum_param(
+                    "include_partial",
+                    "含未收完周/月",
+                    "false",
+                    &[("false", "否"), ("true", "是")],
+                ),
+            ],
+            default_rule: serde_json::json!({
+                "type": "period_return",
+                "timeframe": "day",
+                "n": 5,
+                "period_mode": "all_in_range",
+                "period_min_pct": 0.0,
+                "period_max_pct": 900.0,
+                "total_min_pct": 8.0,
+                "total_max_pct": 900.0,
+                "min_up_count": 4,
+                "include_partial": false
+            }),
+        },
     ]
 }
 
@@ -359,6 +408,19 @@ pub fn required_lookback(expr: &ScreenExpression) -> usize {
                 need = need.max(long + 2);
             }
             "price_change" => {}
+            "period_return" => {
+                let n = rule.get("n").and_then(|x| x.as_u64()).unwrap_or(5) as usize;
+                let tf = rule
+                    .get("timeframe")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("day");
+                let per = match tf {
+                    "week" => 5usize,
+                    "month" => 22,
+                    _ => 1,
+                };
+                need = need.max(n.saturating_mul(per).saturating_add(per + 2));
+            }
             _ => {}
         }
     }
@@ -445,10 +507,12 @@ fn universe_ok(s: &StockDailyData) -> bool {
 }
 
 struct Bar {
+    date: String,
     high: f64,
     low: f64,
     close: f64,
     amount: f64,
+    change_pct: f64,
 }
 
 fn build_series_map(input: &MarketDataInput) -> HashMap<String, Vec<Bar>> {
@@ -456,10 +520,12 @@ fn build_series_map(input: &MarketDataInput) -> HashMap<String, Vec<Bar>> {
     for snap in &input.snapshots {
         for s in &snap.stocks {
             map.entry(s.symbol.clone()).or_default().push(Bar {
+                date: snap.date.clone(),
                 high: s.high,
                 low: s.low,
                 close: s.close_price,
                 amount: s.amount,
+                change_pct: s.change_pct,
             });
         }
     }
@@ -477,6 +543,7 @@ fn eval_rule(rule: &serde_json::Value, series: &[Bar], today: &StockDailyData) -
         "price_breakout" => eval_price_breakout(rule, series),
         "ma_alignment" => eval_ma_alignment(rule, series),
         "price_change" => eval_price_change(rule, today),
+        "period_return" => eval_period_return(rule, series),
         _ => false,
     }
 }
@@ -840,6 +907,168 @@ fn eval_price_change(rule: &serde_json::Value, today: &StockDailyData) -> bool {
     today.change_pct >= lo && today.change_pct <= hi
 }
 
+fn opt_cap(v: Option<f64>) -> f64 {
+    match v {
+        Some(x) if x < 900.0 => x,
+        _ => f64::INFINITY,
+    }
+}
+
+fn period_bucket_key(timeframe: &str, date: &str) -> String {
+    match timeframe {
+        "week" => {
+            // ISO-like: YYYY-Www via chrono if parseable; fallback first 10 chars
+            if let Ok(d) = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d") {
+                use chrono::Datelike;
+                let w = d.iso_week();
+                format!("{:04}-W{:02}", w.year(), w.week())
+            } else {
+                date.to_string()
+            }
+        }
+        "month" => {
+            if date.len() >= 7 {
+                date[..7].to_string()
+            } else {
+                date.to_string()
+            }
+        }
+        _ => date.to_string(),
+    }
+}
+
+struct PeriodBucket {
+    first_close: f64,
+    last_close: f64,
+    change_pct: f64,
+}
+
+fn build_period_buckets(series: &[Bar], timeframe: &str) -> Vec<PeriodBucket> {
+    if series.is_empty() {
+        return vec![];
+    }
+    if timeframe == "day" {
+        return series
+            .iter()
+            .map(|b| PeriodBucket {
+                first_close: b.close,
+                last_close: b.close,
+                change_pct: b.change_pct,
+            })
+            .collect();
+    }
+    let mut out: Vec<PeriodBucket> = Vec::new();
+    let mut cur_key = period_bucket_key(timeframe, &series[0].date);
+    let mut first_close = series[0].close;
+    let mut last_close = series[0].close;
+    for b in series.iter().skip(1) {
+        let k = period_bucket_key(timeframe, &b.date);
+        if k != cur_key {
+            let chg = if first_close > 0.0 {
+                (last_close / first_close - 1.0) * 100.0
+            } else {
+                0.0
+            };
+            out.push(PeriodBucket {
+                first_close,
+                last_close,
+                change_pct: chg,
+            });
+            cur_key = k;
+            first_close = b.close;
+            last_close = b.close;
+        } else {
+            last_close = b.close;
+        }
+    }
+    let chg = if first_close > 0.0 {
+        (last_close / first_close - 1.0) * 100.0
+    } else {
+        0.0
+    };
+    out.push(PeriodBucket {
+        first_close,
+        last_close,
+        change_pct: chg,
+    });
+    out
+}
+
+fn eval_period_return(rule: &serde_json::Value, series: &[Bar]) -> bool {
+    let timeframe = rule
+        .get("timeframe")
+        .and_then(|x| x.as_str())
+        .unwrap_or("day");
+    let n = rule.get("n").and_then(|x| x.as_u64()).unwrap_or(5) as usize;
+    if n == 0 || series.is_empty() {
+        return false;
+    }
+    let include_partial = match rule.get("include_partial") {
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::String(s)) => s.eq_ignore_ascii_case("true"),
+        _ => false,
+    };
+    let mut buckets = build_period_buckets(series, timeframe);
+    if !include_partial && (timeframe == "week" || timeframe == "month") && buckets.len() > 1 {
+        buckets.pop();
+    }
+    if buckets.len() < n {
+        return false;
+    }
+    let window = &buckets[buckets.len() - n..];
+    let p_min = rule
+        .get("period_min_pct")
+        .and_then(|x| x.as_f64())
+        .unwrap_or(0.0);
+    let p_max = opt_cap(rule.get("period_max_pct").and_then(|x| x.as_f64()));
+    let t_min = rule
+        .get("total_min_pct")
+        .and_then(|x| x.as_f64())
+        .unwrap_or(0.0);
+    let t_max = opt_cap(rule.get("total_max_pct").and_then(|x| x.as_f64()));
+    let mode = rule
+        .get("period_mode")
+        .and_then(|x| x.as_str())
+        .unwrap_or("all_in_range");
+    let min_up = rule
+        .get("min_up_count")
+        .and_then(|x| x.as_u64())
+        .unwrap_or(n as u64) as usize;
+
+    let in_range = |x: f64| x >= p_min && x <= p_max;
+    let period_ok = match mode {
+        "all_up" => window.iter().all(|b| b.change_pct > 0.0 && in_range(b.change_pct)),
+        "all_down" => window.iter().all(|b| b.change_pct < 0.0 && in_range(b.change_pct)),
+        "majority" => {
+            window.iter().filter(|b| in_range(b.change_pct)).count() >= min_up.min(n)
+        }
+        "avg_in_range" => {
+            let avg = window.iter().map(|b| b.change_pct).sum::<f64>() / n as f64;
+            in_range(avg)
+        }
+        _ => window.iter().all(|b| in_range(b.change_pct)),
+    };
+    if !period_ok {
+        return false;
+    }
+    let first = window.first().map(|b| b.first_close).unwrap_or(0.0);
+    let last = window.last().map(|b| b.last_close).unwrap_or(0.0);
+    if first <= 0.0 {
+        return false;
+    }
+    // 日线桶 first==last==当日收盘：总涨跌用连乘近似
+    let total = if timeframe == "day" {
+        let mut acc = 1.0;
+        for b in window {
+            acc *= 1.0 + b.change_pct / 100.0;
+        }
+        (acc - 1.0) * 100.0
+    } else {
+        (last / first - 1.0) * 100.0
+    };
+    total >= t_min && total <= t_max
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -859,8 +1088,28 @@ mod tests {
     }
 
     #[test]
-    fn catalog_has_eight() {
-        assert_eq!(strategy_catalog().len(), 8);
+    fn catalog_has_nine() {
+        assert_eq!(strategy_catalog().len(), 9);
+    }
+
+    #[test]
+    fn period_return_five_up_days() {
+        let mut snaps = Vec::new();
+        let mut close = 10.0;
+        for i in 0..10 {
+            let chg = if i >= 5 { 1.5 } else { -0.5 };
+            close *= 1.0 + chg / 100.0;
+            snaps.push(MarketDailySnapshot {
+                date: format!("2026-01-{:02}", i + 1),
+                stocks: vec![bar(close, 4.0e7, chg)],
+            });
+        }
+        let expr = parse_expression(
+            r#"{"type":"period_return","timeframe":"day","n":5,"period_mode":"all_in_range","period_min_pct":0,"period_max_pct":900,"total_min_pct":5,"total_max_pct":900}"#,
+        )
+        .unwrap();
+        let r = run_screen(&MarketDataInput { snapshots: snaps }, &expr, 10);
+        assert_eq!(r.match_count, 1);
     }
 
     #[test]

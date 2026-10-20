@@ -6,7 +6,7 @@
 
 ## 1. 概览
 
-当前内置 **8** 个可组合策略原子。App 可多选，默认 **全部满足（AND）**：
+当前内置 **9** 个可组合策略原子。App 可多选，默认 **全部满足（AND）**：
 
 ```json
 {
@@ -27,6 +27,7 @@
 | `price_breakout` | 价格突破 | 收盘突破近 N 日最高 |
 | `ma_alignment` | 均线多头排列 | 短>中>长且同步向上 |
 | `price_change` | 涨跌幅区间 | 当日涨跌幅落在区间内 |
+| `period_return` | 日/周/月涨跌 | 近 N 桶每桶涨跌 + 总涨跌 |
 
 ### 公共股票池过滤（引擎内置）
 
@@ -36,7 +37,7 @@
 | 涨跌幅 | \|R\| < 9.5% |
 | 价格 | open / close > 0 |
 
-结果按当日涨跌幅降序；`top_n` 默认 50（1–200）。K 线回看最多约 **60** 个开市日。
+结果按当日涨跌幅降序；`top_n` 默认 50（1–200）。K 线回看最多约 **120** 个开市日。
 
 ### API
 
@@ -148,7 +149,45 @@
 
 ---
 
-## 10. 组合示例
+## 10. `period_return` 日/周/月涨跌
+
+在近 **N** 个时间桶上，同时约束每桶涨跌与整段总涨跌。日桶用当日 `change_pct`；周按 ISO 周、月按 `YYYY-MM` 用首尾收盘价算桶涨跌。
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `timeframe` | `day` | `day` / `week` / `month` |
+| `n` | 5 | 回看桶数 |
+| `period_mode` | `all_in_range` | `all_in_range` / `all_up` / `all_down` / `majority` / `avg_in_range` |
+| `period_min_pct` | 0 | 每桶下限 % |
+| `period_max_pct` | 900 | 每桶上限；**≥900 表示不限** |
+| `total_min_pct` | 8 | 总涨跌下限 % |
+| `total_max_pct` | 900 | 总涨跌上限；**≥900 表示不限** |
+| `min_up_count` | 4 | `majority` 时至少几桶落在每桶区间 |
+| `include_partial` | `false` | 周/月是否计入未收完的最后一桶 |
+
+- **日 · 总涨跌**：各日涨跌幅连乘折算  
+- **周/月 · 总涨跌**：窗口首桶首收 → 末桶末收  
+
+默认语义：近 5 日每日不跌（≥0），合计涨幅 ≥ 8%。
+
+```json
+{
+  "type": "period_return",
+  "timeframe": "day",
+  "n": 5,
+  "period_mode": "all_in_range",
+  "period_min_pct": 0,
+  "period_max_pct": 900,
+  "total_min_pct": 8,
+  "total_max_pct": 900,
+  "min_up_count": 4,
+  "include_partial": false
+}
+```
+
+---
+
+## 11. 组合示例
 
 ```json
 {

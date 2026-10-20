@@ -213,7 +213,7 @@ async fn run_screen_with_db(
     expr: &ScreenExpression,
     top_n: usize,
 ) -> AppResult<ScreenResult> {
-    let days = screen::required_lookback(expr).clamp(10, 60);
+    let days = screen::required_lookback(expr).clamp(10, 120);
     let input = data_source::load_market_window(db, days).await?;
     let input = ensure_non_empty(input, days, false)?;
     let mut result = screen::run_screen(&input, expr, top_n);
