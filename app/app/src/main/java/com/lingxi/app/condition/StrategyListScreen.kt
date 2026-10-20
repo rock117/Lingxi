@@ -17,9 +17,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -44,6 +44,43 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lingxi.app.data.model.Condition
 import com.lingxi.app.data.model.StrategyDef
 import com.lingxi.app.viewmodel.ScreenViewModel
+
+/** 原子策略视觉分类（Chip 底色）。 */
+private enum class AtomChipCategory {
+    Trend,
+    Momentum,
+    Volume,
+    Range,
+}
+
+private fun atomCategory(typeId: String): AtomChipCategory = when (typeId) {
+    "ma_cross", "macd_cross", "ma_alignment", "price_breakout", "bollinger" ->
+        AtomChipCategory.Trend
+    "rsi" -> AtomChipCategory.Momentum
+    "volume_spike" -> AtomChipCategory.Volume
+    "price_change", "period_return" -> AtomChipCategory.Range
+    else -> AtomChipCategory.Trend
+}
+
+@Composable
+private fun atomChipColors(category: AtomChipCategory) = when (category) {
+    AtomChipCategory.Trend -> AssistChipDefaults.assistChipColors(
+        containerColor = MaterialTheme.colorScheme.primaryContainer,
+        labelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+    )
+    AtomChipCategory.Momentum -> AssistChipDefaults.assistChipColors(
+        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+        labelColor = MaterialTheme.colorScheme.onTertiaryContainer,
+    )
+    AtomChipCategory.Volume -> AssistChipDefaults.assistChipColors(
+        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+        labelColor = MaterialTheme.colorScheme.onSecondaryContainer,
+    )
+    AtomChipCategory.Range -> AssistChipDefaults.assistChipColors(
+        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -118,6 +155,7 @@ fun StrategyListScreen(
                     AssistChip(
                         onClick = { onComposeFrom(def.typeId) },
                         label = { Text(def.name) },
+                        colors = atomChipColors(atomCategory(def.typeId)),
                     )
                 }
             }
@@ -200,18 +238,23 @@ private fun SavedStrategyCard(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+        Column(modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    item.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                IconButton(onClick = onRun) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = "选股")
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        item.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        summary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
                 Box {
                     IconButton(onClick = { menuOpen = true }) {
@@ -221,6 +264,13 @@ private fun SavedStrategyCard(
                         expanded = menuOpen,
                         onDismissRequest = { menuOpen = false },
                     ) {
+                        DropdownMenuItem(
+                            text = { Text("选股") },
+                            onClick = {
+                                menuOpen = false
+                                onRun()
+                            },
+                        )
                         DropdownMenuItem(
                             text = { Text("重命名") },
                             onClick = {
@@ -245,13 +295,6 @@ private fun SavedStrategyCard(
                     }
                 }
             }
-            Text(
-                summary,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
         }
     }
 }
