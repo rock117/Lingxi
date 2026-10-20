@@ -9,7 +9,7 @@
 use rocket::{get, post};
 use rocket::serde::json::Json;
 use sea_orm::{DatabaseConnection, EntityTrait};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 use entity::condition;
@@ -206,6 +206,101 @@ fn parse_screen_expr(v: &serde_json::Value) -> AppResult<ScreenExpression> {
     }
     let s = serde_json::to_string(v).map_err(|e| AppError::BadRequest(e.to_string()))?;
     screen::parse_expression(&s).map_err(AppError::BadRequest)
+}
+
+#[derive(Debug, Serialize)]
+pub struct StockBarOut {
+    pub date: String,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub change_pct: f64,
+    pub amount: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StockDetailOut {
+    pub symbol: String,
+    pub name: String,
+    pub date: String,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub change_pct: f64,
+    pub amount: f64,
+    /// 近 5 个交易日收盘相对 5 日前收盘涨跌幅 %
+    pub change_5d_pct: Option<f64>,
+    /// 近 10 个交易日收盘相对 10 日前收盘涨跌幅 %
+    pub change_10d_pct: Option<f64>,
+    pub bars: Vec<StockBarOut>,
+}
+
+/// `GET /api/market/stock?symbol=000001.SZ` — 个股近期日 K 与涨跌摘要。
+#[get("/api/market/stock?<symbol>")]
+pub async fn stock_detail(
+    db: &rocket::State<DatabaseConnection>,
+    symbol: &str,
+) -> AppResult<Json<StockDetailOut>> {
+    let symbol = symbol.trim();
+    if symbol.is_empty() || symbol.len() > 32 {
+        return Err(AppError::BadRequest("symbol 无效".into()));
+    }
+    let bars = data_source::load_stock_recent_klines(db.inner(), symbol, 15)
+        .await
+        .map_err(AppError::Db)?;
+    if bars.is_empty() {
+        return Err(AppError::NotFound);
+    }
+    let names = data_source::load_stock_names(db.inner(), &[symbol.to_string()])
+        .await
+        .unwrap_or_default();
+    let name = names.get(symbol).cloned().unwrap_or_default();
+    let last = bars.last().unwrap();
+    let n = bars.len();
+    let change_nd = |lookback: usize| -> Option<f64> {
+        if n <= lookback {
+            return None;
+        }
+        let old = bars[n - 1 - lookback].close_price;
+        let cur = last.close_price;
+        if old > 1e-10 {
+            Some((cur / old - 1.0) * 100.0)
+        } else {
+            None
+        }
+    };
+    Ok(Json(StockDetailOut {
+        symbol: last.symbol.clone(),
+        name,
+        date: last.date.clone(),
+        open: last.open,
+        high: last.high,
+        low: last.low,
+        close: last.close_price,
+        change_pct: last.change_pct,
+        amount: last.amount,
+        change_5d_pct: change_nd(5),
+        change_10d_pct: change_nd(10),
+        bars: bars
+            .iter()
+            .rev()
+            .take(10)
+            .map(|b| StockBarOut {
+                date: b.date.clone(),
+                open: b.open,
+                high: b.high,
+                low: b.low,
+                close: b.close_price,
+                change_pct: b.change_pct,
+                amount: b.amount,
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect(),
+    }))
 }
 
 async fn run_screen_with_db(

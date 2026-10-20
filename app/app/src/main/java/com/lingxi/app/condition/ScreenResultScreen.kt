@@ -1,5 +1,6 @@
 package com.lingxi.app.condition
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -30,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.lingxi.app.ui.QuoteColors
 import com.lingxi.app.viewmodel.ScreenViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -38,6 +40,7 @@ fun ScreenResultScreen(
     viewModel: ScreenViewModel,
     conditionId: Long?,
     onBack: () -> Unit,
+    onOpenStock: (String) -> Unit,
 ) {
     val result by viewModel.result.collectAsStateWithLifecycle()
     val loading by viewModel.loading.collectAsStateWithLifecycle()
@@ -122,8 +125,12 @@ fun ScreenResultScreen(
                     if (r.items.isEmpty()) {
                         item { Text("无符合条件的股票") }
                     }
-                    itemsIndexed(r.items) { idx, item ->
-                        Card(modifier = Modifier.fillMaxWidth()) {
+                    itemsIndexed(r.items, key = { _, it -> it.symbol }) { idx, item ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onOpenStock(item.symbol) },
+                        ) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
@@ -133,11 +140,8 @@ fun ScreenResultScreen(
                                     )
                                     Text(
                                         "%+.1f%%".format(item.changePct),
-                                        color = if (item.changePct >= 0) {
-                                            MaterialTheme.colorScheme.primary
-                                        } else {
-                                            MaterialTheme.colorScheme.error
-                                        },
+                                        color = QuoteColors.of(item.changePct),
+                                        fontWeight = FontWeight.SemiBold,
                                     )
                                 }
                                 Text(

@@ -148,6 +148,7 @@ async fn rocket() -> _ {
                 market::routes::strategies,
                 market::routes::screen_preview,
                 market::routes::screen_by_condition,
+                market::routes::stock_detail,
                 ws::ws_handler,
             ],
         )

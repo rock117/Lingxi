@@ -8,6 +8,7 @@ import com.lingxi.app.data.model.MttResult
 import com.lingxi.app.data.model.NotificationItem
 import com.lingxi.app.data.model.ScreenRequest
 import com.lingxi.app.data.model.ScreenResult
+import com.lingxi.app.data.model.StockDetail
 import com.lingxi.app.data.model.StrategyDef
 import com.lingxi.app.data.model.UpdateConditionRequest
 import retrofit2.http.Body
@@ -64,6 +65,9 @@ interface LingxiApi {
         @Path("id") id: Long,
         @Query("top_n") topN: Int = 50,
     ): ScreenResult
+
+    @GET("api/market/stock")
+    suspend fun stockDetail(@Query("symbol") symbol: String): StockDetail
 
     @GET("api/notifications")
     suspend fun listNotifications(

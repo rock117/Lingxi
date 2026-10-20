@@ -8,6 +8,7 @@ object Routes {
     const val SCREEN_COMPOSE = "screen/compose/{typeId}"
     const val SCREEN_EDIT = "screen/edit/{id}"
     const val SCREEN_RESULT = "screen/result/{conditionId}"
+    const val STOCK_DETAIL = "stock/detail/{symbol}"
 
     fun conditionEdit(id: Long) = "condition/edit/$id"
 
@@ -22,4 +23,11 @@ object Routes {
         val id = conditionId ?: 0L
         return "screen/result/$id"
     }
+
+    /** 路径中 `.` 换成 `~`，避免 Nav 路径解析问题。 */
+    fun stockDetail(symbol: String): String =
+        "stock/detail/${symbol.replace('.', '~')}"
+
+    fun decodeStockSymbol(encoded: String): String =
+        encoded.replace('~', '.')
 }

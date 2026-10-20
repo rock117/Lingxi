@@ -53,3 +53,30 @@ data class ScreenRequest(
     val expression: JsonElement,
     @SerialName("top_n") val topN: Int = 50,
 )
+
+@Serializable
+data class StockBar(
+    val date: String = "",
+    val open: Double = 0.0,
+    val high: Double = 0.0,
+    val low: Double = 0.0,
+    val close: Double = 0.0,
+    @SerialName("change_pct") val changePct: Double = 0.0,
+    val amount: Double = 0.0,
+)
+
+@Serializable
+data class StockDetail(
+    val symbol: String = "",
+    val name: String = "",
+    val date: String = "",
+    val open: Double = 0.0,
+    val high: Double = 0.0,
+    val low: Double = 0.0,
+    val close: Double = 0.0,
+    @SerialName("change_pct") val changePct: Double = 0.0,
+    val amount: Double = 0.0,
+    @SerialName("change_5d_pct") val change5dPct: Double? = null,
+    @SerialName("change_10d_pct") val change10dPct: Double? = null,
+    val bars: List<StockBar> = emptyList(),
+)

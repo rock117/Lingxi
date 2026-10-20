@@ -375,6 +375,62 @@ pub async fn load_stock_names(
     Ok(rows.into_iter().map(|r| (r.symbol, r.name)).collect())
 }
 
+/// 单票最近 `days` 个开市日 K 线（按日期升序）。
+pub async fn load_stock_recent_klines(
+    db: &DatabaseConnection,
+    symbol: &str,
+    days: usize,
+) -> Result<Vec<StockDailyData>, DbErr> {
+    let days = days.max(1);
+    let as_of = session::shanghai_today_naive();
+    let sql = r#"
+WITH dates AS (
+    SELECT trade_date
+    FROM sc_trade_calendar
+    WHERE is_open = TRUE
+      AND trade_date <= $3
+    ORDER BY trade_date DESC
+    LIMIT $2
+)
+SELECT
+    k.symbol,
+    k.trade_date,
+    k.open::double precision   AS open,
+    k.high::double precision   AS high,
+    k.low::double precision    AS low,
+    k.close::double precision  AS close,
+    k.pre_close::double precision AS pre_close,
+    k.amount::double precision AS amount
+FROM dates d
+INNER JOIN sc_stock_kline_d1_bfq k
+    ON k.trade_date = d.trade_date
+   AND k.symbol = $1
+ORDER BY k.trade_date ASC
+"#;
+
+    let rows = KlineRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        sql,
+        [symbol.into(), (days as i64).into(), as_of.into()],
+    ))
+    .all(db)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| StockDailyData {
+            symbol: row.symbol,
+            date: row.trade_date.format("%Y-%m-%d").to_string(),
+            open: row.open,
+            high: row.high,
+            low: row.low,
+            close_price: row.close,
+            amount: row.amount,
+            change_pct: change_pct(row.close, row.pre_close),
+        })
+        .collect())
+}
+
 /// 活跃股票完整代码（`代码.市场后缀`）。
 pub async fn load_active_symbols(db: &DatabaseConnection) -> Result<Vec<String>, DbErr> {
     #[derive(Debug, FromQueryResult)]
