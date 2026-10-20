@@ -27,29 +27,29 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.lingxi.app.condition.ConditionListScreen
+import com.lingxi.app.condition.StrategyListScreen
 import com.lingxi.app.market.SentimentScreen
 import com.lingxi.app.notification.NotificationListScreen
-import com.lingxi.app.viewmodel.ConditionViewModel
 import com.lingxi.app.viewmodel.MarketViewModel
 import com.lingxi.app.viewmodel.NotificationViewModel
+import com.lingxi.app.viewmodel.ScreenViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     marketViewModel: MarketViewModel,
-    conditionViewModel: ConditionViewModel,
+    screenViewModel: ScreenViewModel,
     notificationViewModel: NotificationViewModel,
     onOpenSettings: () -> Unit,
-    onCreateCondition: () -> Unit,
-    onEditCondition: (Long) -> Unit,
+    onComposeScreen: (String?) -> Unit,
+    onRunScreen: (Long) -> Unit,
 ) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val unread by notificationViewModel.unreadCount.collectAsStateWithLifecycle()
 
     val title = when (tab) {
         0 -> "短线情绪 · 中期结构"
-        1 -> "条件"
+        1 -> "选股策略"
         else -> "通知"
     }
 
@@ -76,7 +76,7 @@ fun HomeScreen(
                     selected = tab == 1,
                     onClick = { tab = 1 },
                     icon = { Icon(Icons.Default.ListAlt, contentDescription = null) },
-                    label = { Text("条件") },
+                    label = { Text("策略") },
                 )
                 NavigationBarItem(
                     selected = tab == 2,
@@ -98,8 +98,8 @@ fun HomeScreen(
         },
         floatingActionButton = {
             if (tab == 1) {
-                FloatingActionButton(onClick = onCreateCondition) {
-                    Icon(Icons.Default.Add, contentDescription = "新建条件")
+                FloatingActionButton(onClick = { onComposeScreen(null) }) {
+                    Icon(Icons.Default.Add, contentDescription = "新建选股策略")
                 }
             }
         },
@@ -111,9 +111,10 @@ fun HomeScreen(
         ) {
             when (tab) {
                 0 -> SentimentScreen(viewModel = marketViewModel)
-                1 -> ConditionListScreen(
-                    viewModel = conditionViewModel,
-                    onEdit = onEditCondition,
+                1 -> StrategyListScreen(
+                    viewModel = screenViewModel,
+                    onComposeFrom = onComposeScreen,
+                    onRunSaved = onRunScreen,
                 )
                 else -> NotificationListScreen(viewModel = notificationViewModel)
             }

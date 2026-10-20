@@ -145,6 +145,9 @@ async fn rocket() -> _ {
                 market::routes::sentiment,
                 market::routes::mid_term_trend,
                 market::routes::intraday_alerts,
+                market::routes::strategies,
+                market::routes::screen_preview,
+                market::routes::screen_by_condition,
                 ws::ws_handler,
             ],
         )

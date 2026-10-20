@@ -6,6 +6,9 @@ import com.lingxi.app.data.model.HealthResponse
 import com.lingxi.app.data.model.MsiResult
 import com.lingxi.app.data.model.MttResult
 import com.lingxi.app.data.model.NotificationItem
+import com.lingxi.app.data.model.ScreenRequest
+import com.lingxi.app.data.model.ScreenResult
+import com.lingxi.app.data.model.StrategyDef
 import com.lingxi.app.data.model.UpdateConditionRequest
 import retrofit2.http.Body
 import retrofit2.http.DELETE
@@ -49,6 +52,18 @@ interface LingxiApi {
 
     @DELETE("api/conditions/{id}")
     suspend fun deleteCondition(@Path("id") id: Long)
+
+    @GET("api/market/strategies")
+    suspend fun listStrategies(): List<StrategyDef>
+
+    @POST("api/market/screen")
+    suspend fun screenPreview(@Body body: ScreenRequest): ScreenResult
+
+    @GET("api/market/screen/{id}")
+    suspend fun screenByCondition(
+        @Path("id") id: Long,
+        @Query("top_n") topN: Int = 50,
+    ): ScreenResult
 
     @GET("api/notifications")
     suspend fun listNotifications(

@@ -5,6 +5,18 @@ object Routes {
     const val SETTINGS = "settings"
     const val CONDITION_CREATE = "condition/create"
     const val CONDITION_EDIT = "condition/edit/{id}"
+    const val SCREEN_COMPOSE = "screen/compose/{typeId}"
+    const val SCREEN_RESULT = "screen/result/{conditionId}"
 
     fun conditionEdit(id: Long) = "condition/edit/$id"
+
+    fun screenCompose(typeId: String? = null): String {
+        val t = typeId?.takeIf { it.isNotBlank() } ?: "_"
+        return "screen/compose/$t"
+    }
+
+    fun screenResult(conditionId: Long? = null): String {
+        val id = conditionId ?: 0L
+        return "screen/result/$id"
+    }
 }

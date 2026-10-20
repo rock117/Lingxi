@@ -6,11 +6,13 @@
 //! 一律读真实行情：`sc_stock` + `sc_stock_kline_d1_bfq`；
 //! MSI / 日内推送在盘中对最新交易日叠加 Miana 实时行情。
 
-use rocket::get;
+use rocket::{get, post};
 use rocket::serde::json::Json;
-use sea_orm::DatabaseConnection;
+use sea_orm::{DatabaseConnection, EntityTrait};
+use serde::Deserialize;
 
 use crate::error::{AppError, AppResult};
+use entity::condition;
 
 use super::calculator;
 use super::data_source;
@@ -21,6 +23,7 @@ use super::mid_term;
 use super::miana::MianaClient;
 use super::realtime_cache::RealtimeDayCache;
 use super::result_cache;
+use super::screen::{self, ScreenExpression, ScreenResult, StrategyDef};
 use super::session;
 
 /// MTT 需要至少 MA60 + 斜率回看，默认取最近 70 个交易日。
@@ -150,4 +153,84 @@ pub async fn intraday_alerts(
         .await
         .map_err(|e| AppError::Internal(e))?;
     Ok(Json(result))
+}
+
+/// `GET /api/market/strategies` — 可选策略目录（参数 schema + 默认规则）。
+#[get("/api/market/strategies")]
+pub async fn strategies() -> Json<Vec<StrategyDef>> {
+    Json(screen::strategy_catalog())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ScreenRequest {
+    /// `{ "op":"and", "rules":[ ... ] }` 或单条 rule JSON 字符串 / 对象
+    pub expression: serde_json::Value,
+    pub top_n: Option<usize>,
+}
+
+/// `POST /api/market/screen` — 按组合表达式立即选股（不落库）。
+#[post("/api/market/screen", data = "<input>")]
+pub async fn screen_preview(
+    db: &rocket::State<DatabaseConnection>,
+    input: Json<ScreenRequest>,
+) -> AppResult<Json<ScreenResult>> {
+    let expr = parse_screen_expr(&input.expression)?;
+    let top_n = input.top_n.unwrap_or(50).clamp(1, 200);
+    Ok(Json(run_screen_with_db(db.inner(), &expr, top_n).await?))
+}
+
+/// `GET /api/market/screen/<condition_id>` — 对已保存的 screen 条件跑选股。
+#[get("/api/market/screen/<condition_id>?<top_n>")]
+pub async fn screen_by_condition(
+    db: &rocket::State<DatabaseConnection>,
+    condition_id: i64,
+    top_n: Option<usize>,
+) -> AppResult<Json<ScreenResult>> {
+    let m = condition::Entity::find_by_id(condition_id)
+        .one(db.inner())
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if m.kind != "screen" {
+        return Err(AppError::BadRequest(
+            "该条件不是选股策略（kind 需为 screen）".into(),
+        ));
+    }
+    let expr = screen::parse_expression(&m.expression).map_err(AppError::BadRequest)?;
+    let top_n = top_n.unwrap_or(50).clamp(1, 200);
+    Ok(Json(run_screen_with_db(db.inner(), &expr, top_n).await?))
+}
+
+fn parse_screen_expr(v: &serde_json::Value) -> AppResult<ScreenExpression> {
+    if let Some(s) = v.as_str() {
+        return screen::parse_expression(s).map_err(AppError::BadRequest);
+    }
+    let s = serde_json::to_string(v).map_err(|e| AppError::BadRequest(e.to_string()))?;
+    screen::parse_expression(&s).map_err(AppError::BadRequest)
+}
+
+async fn run_screen_with_db(
+    db: &DatabaseConnection,
+    expr: &ScreenExpression,
+    top_n: usize,
+) -> AppResult<ScreenResult> {
+    let days = screen::required_lookback(expr).clamp(10, 60);
+    let input = data_source::load_market_window(db, days).await?;
+    let input = ensure_non_empty(input, days, false)?;
+    let mut result = screen::run_screen(&input, expr, top_n);
+    let symbols: Vec<String> = result.items.iter().map(|i| i.symbol.clone()).collect();
+    if let Ok(names) = data_source::load_stock_names(db, &symbols).await {
+        for item in &mut result.items {
+            if let Some(n) = names.get(&item.symbol) {
+                item.name = n.clone();
+            }
+        }
+    }
+    tracing::info!(
+        date = %result.date,
+        sample = result.sample_size,
+        matches = result.match_count,
+        returned = result.items.len(),
+        "条件选股完成"
+    );
+    Ok(result)
 }

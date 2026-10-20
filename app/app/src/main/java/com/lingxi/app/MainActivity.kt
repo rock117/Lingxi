@@ -16,21 +16,22 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.lingxi.app.condition.ConditionFormScreen
+import com.lingxi.app.condition.ScreenComposeScreen
+import com.lingxi.app.condition.ScreenResultScreen
 import com.lingxi.app.home.HomeScreen
 import com.lingxi.app.navigation.Routes
 import com.lingxi.app.notification.NotificationHelper
 import com.lingxi.app.service.LingxiService
 import com.lingxi.app.settings.SettingsScreen
 import com.lingxi.app.theme.LingxiTheme
-import com.lingxi.app.viewmodel.ConditionViewModel
 import com.lingxi.app.viewmodel.MarketViewModel
 import com.lingxi.app.viewmodel.NotificationViewModel
+import com.lingxi.app.viewmodel.ScreenViewModel
 import com.lingxi.app.viewmodel.SettingsViewModel
 
 class MainActivity : ComponentActivity() {
     private val marketViewModel: MarketViewModel by viewModels()
-    private val conditionViewModel: ConditionViewModel by viewModels()
+    private val screenViewModel: ScreenViewModel by viewModels()
     private val notificationViewModel: NotificationViewModel by viewModels()
     private val settingsViewModel: SettingsViewModel by viewModels()
 
@@ -45,17 +46,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // 注册通知渠道
         NotificationHelper.ensureChannels(this)
-
-        // 请求通知权限并启动前台服务
         startNotificationService()
 
         setContent {
             LingxiTheme {
                 LingxiNav(
                     marketViewModel = marketViewModel,
-                    conditionViewModel = conditionViewModel,
+                    screenViewModel = screenViewModel,
                     notificationViewModel = notificationViewModel,
                     settingsViewModel = settingsViewModel,
                 )
@@ -81,8 +79,6 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        // 不在 onDestroy 停止服务，让后台监听持续运行
-        // 用户可通过系统通知设置手动停止
         super.onDestroy()
     }
 }
@@ -90,7 +86,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun LingxiNav(
     marketViewModel: MarketViewModel,
-    conditionViewModel: ConditionViewModel,
+    screenViewModel: ScreenViewModel,
     notificationViewModel: NotificationViewModel,
     settingsViewModel: SettingsViewModel,
 ) {
@@ -100,11 +96,16 @@ private fun LingxiNav(
         composable(Routes.HOME) {
             HomeScreen(
                 marketViewModel = marketViewModel,
-                conditionViewModel = conditionViewModel,
+                screenViewModel = screenViewModel,
                 notificationViewModel = notificationViewModel,
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
-                onCreateCondition = { navController.navigate(Routes.CONDITION_CREATE) },
-                onEditCondition = { id -> navController.navigate(Routes.conditionEdit(id)) },
+                onComposeScreen = { typeId ->
+                    navController.navigate(Routes.screenCompose(typeId))
+                },
+                onRunScreen = { id ->
+                    screenViewModel.clearResult()
+                    navController.navigate(Routes.screenResult(id))
+                },
             )
         }
         composable(Routes.SETTINGS) {
@@ -113,23 +114,33 @@ private fun LingxiNav(
                 onBack = { navController.popBackStack() },
             )
         }
-        composable(Routes.CONDITION_CREATE) {
-            ConditionFormScreen(
-                viewModel = conditionViewModel,
-                editId = null,
-                onDone = { navController.popBackStack() },
+        composable(
+            route = Routes.SCREEN_COMPOSE,
+            arguments = listOf(navArgument("typeId") { type = NavType.StringType }),
+        ) { entry ->
+            val raw = entry.arguments?.getString("typeId")
+            val typeId = raw?.takeIf { it.isNotBlank() && it != "_" }
+            ScreenComposeScreen(
+                viewModel = screenViewModel,
+                initialTypeId = typeId,
                 onBack = { navController.popBackStack() },
+                onSavedAndRun = { id ->
+                    navController.popBackStack()
+                    navController.navigate(Routes.screenResult(id))
+                },
+                onPreviewDone = {
+                    navController.navigate(Routes.screenResult(null))
+                },
             )
         }
         composable(
-            route = Routes.CONDITION_EDIT,
-            arguments = listOf(navArgument("id") { type = NavType.LongType }),
+            route = Routes.SCREEN_RESULT,
+            arguments = listOf(navArgument("conditionId") { type = NavType.LongType }),
         ) { entry ->
-            val id = entry.arguments?.getLong("id")
-            ConditionFormScreen(
-                viewModel = conditionViewModel,
-                editId = id,
-                onDone = { navController.popBackStack() },
+            val id = entry.arguments?.getLong("conditionId")?.takeIf { it > 0 }
+            ScreenResultScreen(
+                viewModel = screenViewModel,
+                conditionId = id,
                 onBack = { navController.popBackStack() },
             )
         }

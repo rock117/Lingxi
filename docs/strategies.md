@@ -1,7 +1,9 @@
 # 股票价格买卖信号策略设计
 
-本文档设计 9 个常用的股票买卖信号提醒策略，每个策略包含原理、参数、信号条件、
-expression JSON 格式（与后端 `condition.expression` 字段兼容）及适用场景。
+本文档描述条件选股已落地的个股日 K 策略：原理、参数、信号条件与 expression JSON。  
+实现与 API 以 [`docs/screen.md`](./screen.md)、`backend/src/market/screen.rs` 为准。
+
+另有原子策略 **涨跌幅区间** `price_change`，详见 `screen.md` §9。
 
 ## 目录
 
@@ -12,8 +14,6 @@ expression JSON 格式（与后端 `condition.expression` 字段兼容）及适�
 5. [成交量异常放大策略](#5-成交量异常放大策略)
 6. [价格突破策略（支撑/阻力）](#6-价格突破策略支撑阻力)
 7. [均线多空排列策略](#7-均线多空排列策略)
-8. [大盘影响因素策略（个股 vs 大盘）](#8-大盘影响因素策略个股-vs-大盘)
-9. [大盘成交量策略（市场情绪）](#9-大盘成交量策略市场情绪)
 
 ---
 
@@ -299,217 +299,18 @@ DIF 下穿 DEA → 卖出。柱状图由负转正也视为买入信号。
 
 ---
 
-## 8. 大盘影响因素策略（个股 vs 大盘）
+## expression 说明
 
-### 原理
-
-个股走势受大盘（如上证指数、沪深300）影响显著。通过对比个股涨跌幅与大盘涨跌幅，
-判断个股是独立走强/走弱还是跟随大盘。当个股相对大盘出现显著偏离时，可能存在
-交易机会或风险预警。
-
-### 子策略
-
-| 子策略 | 说明 |
-|---|---|
-| **逆势走强** | 大盘下跌但个股逆势上涨，可能有独立利好 |
-| **逆势走弱** | 大盘上涨但个股逆势下跌，可能有独立利空 |
-| **同步破位** | 个股与大盘同时跌破关键均线，系统性风险 |
-| **超额波动** | 个股波动幅度远超大盘，资金异动 |
-
-### 参数
-
-| 参数 | 说明 | 默认值 |
-|---|---|---|
-| `index_code` | 大盘指数代码 | `sh000001`（上证指数） |
-| `divergence_threshold` | 个股与大盘涨跌幅偏离阈值（百分点） | 2.0 |
-| `lookback_days` | 回看天数（计算相关性） | 5 |
-| `mode` | 子策略模式：`divergence_up` / `divergence_down` / `sync_breakdown` / `excess_volatility` / `any` | `any` |
-| `ma_period` | 关键均线周期（`sync_breakdown` 模式用） | 20 |
-
-### 信号条件
-
-- **逆势走强（divergence_up）**：大盘跌幅 > 0，个股涨幅 > 0，且 `个股涨幅 - 大盘涨幅 > divergence_threshold`
-- **逆势走弱（divergence_down）**：大盘涨幅 > 0，个股跌幅 > 0，且 `大盘涨幅 - 个股涨幅 > divergence_threshold`
-- **同步破位（sync_breakdown）**：个股与大盘同时跌破各自 `ma_period` 日均线
-- **超额波动（excess_volatility）**：近 `lookback_days` 日个股波动率 / 大盘波动率 > `divergence_threshold`
-
-### expression 格式
-
-```json
-{
-  "type": "market_divergence",
-  "index_code": "sh000001",
-  "divergence_threshold": 2.0,
-  "lookback_days": 5,
-  "mode": "divergence_up"
-}
-```
-
-### 优缺点
-
-- ✅ 捕捉个股独立行情，发现主力资金动向
-- ✅ 系统性风险预警（同步破位）
-- ❌ 需要同时获取个股和大盘数据
-- 💡 逆势走强 + 成交量放大 → 强烈买入信号
-
----
-
-## 9. 大盘成交量策略（市场情绪）
-
-### 原理
-
-大盘成交量反映市场整体活跃度和资金参与意愿。放量上涨代表资金积极入场，
-缩量下跌代表抛压减轻；天量往往出现在阶段顶部或底部。
-
-### 子策略
-
-| 子策略 | 说明 |
-|---|---|
-| **放量上涨** | 大盘成交量放大 + 上涨，资金入场 |
-| **缩量下跌** | 大盘成交量萎缩 + 下跌，抛压减弱 |
-| **天量预警** | 成交量达到近期均量的极高倍数，可能见顶/见底 |
-| **地量预警** | 成交量萎缩至近期极低水平，可能见底 |
-
-### 参数
-
-| 参数 | 说明 | 默认值 |
-|---|---|---|
-| `index_code` | 大盘指数代码 | `sh000001` |
-| `period` | 均量计算周期 | 20 |
-| `volume_multiplier` | 放量倍数阈值 | 1.5 |
-| `shrink_multiplier` | 缩量倍数阈值（低于均量的比例） | 0.5 |
-| `extreme_multiplier` | 天量倍数阈值 | 3.0 |
-| `mode` | 子策略模式：`volume_up` / `shrink_down` / `extreme_high` / `extreme_low` / `any` | `any` |
-
-### 信号条件
-
-- **放量上涨（volume_up）**：大盘涨幅 > 0 且 成交量 > `period` 日均量 × `volume_multiplier`
-- **缩量下跌（shrink_down）**：大盘跌幅 > 0 且 成交量 < `period` 日均量 × `shrink_multiplier`
-- **天量预警（extreme_high）**：成交量 > `period` 日均量 × `extreme_multiplier`，提示可能见顶或见底
-- **地量预警（extreme_low）**：成交量 < `period` 日均量 × `shrink_multiplier`，提示可能见底
-
-### expression 格式
-
-```json
-{
-  "type": "market_volume",
-  "index_code": "sh000001",
-  "period": 20,
-  "volume_multiplier": 1.5,
-  "mode": "volume_up"
-}
-```
-
-### 优缺点
-
-- ✅ 反映市场整体情绪，判断牛熊转换
-- ✅ 天量/地量是经典顶底信号
-- ❌ 单独使用无法判断个股，需配合个股策略
-- 💡 大盘放量上涨 + 个股金叉 → 高胜率买入组合
-
-### 常用大盘指数代码
-
-| 代码 | 指数 |
-|---|---|
-| `sh000001` | 上证指数 |
-| `sh000300` | 沪深300 |
-| `sz399001` | 深证成指 |
-| `sz399006` | 创业板指 |
-| `sh000016` | 上证50 |
-
----
-
-## expression 格式扩展说明
-
-当前后端 `expression` 字段为 JSON 字符串，第一版仅支持 `trigger_rate` 随机触发。
-接入真实行情数据后，后端 `matcher.rs` 需扩展 `Expression` 结构体以支持上述所有策略。
-
-### 扩展后的 Expression 结构（Rust 伪代码）
-
-```rust
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type")]
-pub enum Expression {
-    MaCross {
-        fast_period: u32,
-        slow_period: u32,
-        ma_type: String,       // "sma" | "ema"
-        direction: String,     // "golden" | "death" | "both"
-    },
-    Rsi {
-        period: u32,
-        overbought: f64,
-        oversold: f64,
-        direction: String,
-    },
-    MacdCross {
-        fast_period: u32,
-        slow_period: u32,
-        signal_period: u32,
-        direction: String,
-    },
-    Bollinger {
-        period: u32,
-        std_dev: f64,
-        direction: String,
-    },
-    VolumeSpike {
-        period: u32,
-        multiplier: f64,
-        price_direction: String,
-    },
-    PriceBreakout {
-        period: u32,
-        direction: String,
-        confirm_bars: u32,
-    },
-    MaAlignment {
-        periods: Vec<u32>,
-        ma_type: String,
-        direction: String,
-    },
-    // 大盘影响因素
-    MarketDivergence {
-        index_code: String,
-        divergence_threshold: f64,
-        lookback_days: u32,
-        mode: String,           // "divergence_up" | "divergence_down" | "sync_breakdown" | "excess_volatility" | "any"
-        ma_period: Option<u32>,
-    },
-    // 大盘成交量
-    MarketVolume {
-        index_code: String,
-        period: u32,
-        volume_multiplier: f64,
-        shrink_multiplier: f64,
-        extreme_multiplier: f64,
-        mode: String,           // "volume_up" | "shrink_down" | "extreme_high" | "extreme_low" | "any"
-    },
-    // 兼容 Mock 模式
-    PriceDrop {
-        threshold: f64,
-        trigger_rate: Option<f64>,
-    },
-    PriceRise {
-        threshold: f64,
-        trigger_rate: Option<f64>,
-    },
-}
-```
+选股组合为 `{ "op": "and"|"or", "rules": [ ... ] }`，单条 rule 的 `type` 对应上表策略；  
+另支持 `price_change`（`min_pct` / `max_pct`）。求值见 `screen.rs`。
 
 ### 数据需求
 
 | 策略 | 所需数据 |
 |---|---|
-| 均线交叉 | 日 K 线收盘价序列 |
-| RSI | 日 K 线收盘价序列 |
-| MACD | 日 K 线收盘价序列 |
-| 布林带 | 日 K 线收盘价序列 |
-| 成交量放大 | 日 K 线成交量序列 + 收盘价 |
-| 价格突破 | 日 K 线最高/最低/收盘价 |
-| 均线排列 | 日 K 线收盘价序列 |
-| 大盘影响因素 | 个股 K 线 + 大盘指数 K 线（收盘价/均线） |
-| 大盘成交量 | 大盘指数 K 线（成交量 + 收盘价） |
+| 均线交叉 / RSI / MACD / 布林 / 均线排列 | 日 K 收盘价序列 |
+| 成交量放大 | 日 K 成交额 + 涨跌幅 |
+| 价格突破 | 日 K 最高/最低/收盘 |
+| 涨跌幅区间 | 当日涨跌幅 |
 
-所有策略均基于日 K 线数据，每根 K 线需包含：`open, high, low, close, volume, date`。
-大盘相关策略还需额外获取指数 K 线数据（同样的 OHLCV 格式）。
+日 K 字段：`open, high, low, close, amount, change_pct, date`。

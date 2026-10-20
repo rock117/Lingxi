@@ -54,9 +54,9 @@ impl From<condition::Model> for ConditionOut {
 
 fn validate_kind(kind: &str) -> AppResult<()> {
     match kind {
-        "trade" | "news" => Ok(()),
+        "trade" | "news" | "screen" => Ok(()),
         _ => Err(AppError::BadRequest(format!(
-            "kind 必须是 'trade' 或 'news'，收到: {}",
+            "kind 必须是 'trade' / 'news' / 'screen'，收到: {}",
             kind
         ))),
     }
@@ -68,12 +68,21 @@ pub async fn create(
     input: Json<CreateCondition>,
 ) -> AppResult<Json<ConditionOut>> {
     validate_kind(&input.kind)?;
+    if input.kind == "screen" {
+        crate::market::screen::parse_expression(&input.expression)
+            .map_err(AppError::BadRequest)?;
+    }
     let now = session::shanghai_now_rfc3339();
+    let symbol = if input.kind == "screen" {
+        None
+    } else {
+        input.symbol.clone()
+    };
 
     let model = condition::ActiveModel {
         name: Set(input.name.clone()),
         kind: Set(input.kind.clone()),
-        symbol: Set(input.symbol.clone()),
+        symbol: Set(symbol),
         expression: Set(input.expression.clone()),
         enabled: Set(input.enabled.unwrap_or(true)),
         created_at: Set(now.clone()),

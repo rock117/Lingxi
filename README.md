@@ -242,6 +242,9 @@ python script/deploy_backend.py --service-only
 | GET | `/api/market/sentiment` | 短线情绪 MSI |
 | GET | `/api/market/mid-term-trend` | 中期趋势 MTT |
 | GET | `/api/market/intraday-alerts` | `{ trend, oversold }` 两类 Top10（即时计算，不推送） |
+| GET | `/api/market/strategies` | 选股策略目录（均线金叉 / RSI / 放量） |
+| POST | `/api/market/screen` | 按 expression 立即选股 |
+| GET | `/api/market/screen/:id` | 对已保存 `kind=screen` 条件跑选股 |
 | WS | `/ws` | WebSocket 推送（含趋势 / 超跌通知） |
 
 更多细节（数据模型、条件表达式格式等）见 [PLAN.md](./PLAN.md)。
