@@ -51,6 +51,7 @@ private enum class AtomChipCategory {
     Momentum,
     Volume,
     Range,
+    Fundamental,
 }
 
 private fun atomCategory(typeId: String): AtomChipCategory = when (typeId) {
@@ -59,6 +60,9 @@ private fun atomCategory(typeId: String): AtomChipCategory = when (typeId) {
     "rsi" -> AtomChipCategory.Momentum
     "volume_spike" -> AtomChipCategory.Volume
     "price_change", "period_return" -> AtomChipCategory.Range
+    "income_revenue", "income_parent_np", "income_deduct_np", "fundamental_income",
+    "cf_operating", "cf_investing", "cf_financing" ->
+        AtomChipCategory.Fundamental
     else -> AtomChipCategory.Trend
 }
 
@@ -79,6 +83,10 @@ private fun atomChipColors(category: AtomChipCategory) = when (category) {
     AtomChipCategory.Range -> AssistChipDefaults.assistChipColors(
         containerColor = MaterialTheme.colorScheme.surfaceVariant,
         labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    AtomChipCategory.Fundamental -> AssistChipDefaults.assistChipColors(
+        containerColor = MaterialTheme.colorScheme.errorContainer,
+        labelColor = MaterialTheme.colorScheme.onErrorContainer,
     )
 }
 

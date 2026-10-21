@@ -6,6 +6,14 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use super::domain::{MarketDataInput, StockDailyData};
+use super::fundamentals::{CashflowSnapshot, IncomeSnapshot};
+
+/// 选股时可选的基本面快照。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FundMaps<'a> {
+    pub income: Option<&'a HashMap<String, IncomeSnapshot>>,
+    pub cashflow: Option<&'a HashMap<String, CashflowSnapshot>>,
+}
 
 const AMOUNT_MIN: f64 = 3.0e7;
 const LIMIT_PCT: f64 = 9.5;
@@ -316,7 +324,65 @@ pub fn strategy_catalog() -> Vec<StrategyDef> {
                 "include_partial": false
             }),
         },
+        fund_metric_def(
+            "income_revenue",
+            "营业收入",
+            "当期值(亿元)或同比、环比",
+        ),
+        fund_metric_def(
+            "income_parent_np",
+            "归母净利润",
+            "当期值(亿元)或同比、环比",
+        ),
+        fund_metric_def(
+            "income_deduct_np",
+            "扣非净利润",
+            "当期值(亿元)或同比、环比",
+        ),
+        fund_metric_def(
+            "cf_operating",
+            "经营现金流净额",
+            "当期值(亿元)或同比、环比",
+        ),
+        fund_metric_def(
+            "cf_investing",
+            "投资现金流净额",
+            "当期值(亿元)或同比、环比",
+        ),
+        fund_metric_def(
+            "cf_financing",
+            "筹资现金流净额",
+            "当期值(亿元)或同比、环比",
+        ),
     ]
+}
+
+fn fund_metric_def(type_id: &str, name: &str, summary: &str) -> StrategyDef {
+    StrategyDef {
+        type_id: type_id.into(),
+        name: name.into(),
+        summary: summary.into(),
+        params: vec![
+            enum_param(
+                "measure",
+                "度量",
+                "yoy",
+                &[
+                    ("value", "当期值(亿元)"),
+                    ("yoy", "同比%"),
+                    ("qoq", "环比%"),
+                ],
+            ),
+            num_param("min", "下限", 10.0, -500.0, 1.0e6),
+            num_param("max", "上限(≥900不限)", 900.0, -500.0, 1.0e6),
+        ],
+        default_rule: serde_json::json!({
+            "type": type_id,
+            "measure": "yoy",
+            "min": 10.0,
+            "max": 900.0
+        }),
+    }
 }
 
 fn num_param(key: &str, label: &str, default: f64, min: f64, max: f64) -> StrategyParamDef {
@@ -421,6 +487,8 @@ pub fn required_lookback(expr: &ScreenExpression) -> usize {
                 };
                 need = need.max(n.saturating_mul(per).saturating_add(per + 2));
             }
+            "income_revenue" | "income_parent_np" | "income_deduct_np"
+            | "cf_operating" | "cf_investing" | "cf_financing" => {}
             _ => {}
         }
     }
@@ -428,6 +496,15 @@ pub fn required_lookback(expr: &ScreenExpression) -> usize {
 }
 
 pub fn run_screen(input: &MarketDataInput, expr: &ScreenExpression, top_n: usize) -> ScreenResult {
+    run_screen_with_fundamentals(input, expr, top_n, FundMaps::default())
+}
+
+pub fn run_screen_with_fundamentals(
+    input: &MarketDataInput,
+    expr: &ScreenExpression,
+    top_n: usize,
+    funds: FundMaps<'_>,
+) -> ScreenResult {
     let Some(today) = input.snapshots.last() else {
         return ScreenResult {
             date: String::new(),
@@ -449,6 +526,8 @@ pub fn run_screen(input: &MarketDataInput, expr: &ScreenExpression, top_n: usize
         let Some(series) = hist_map.get(&s.symbol) else {
             continue;
         };
+        let income = funds.income.and_then(|m| m.get(&s.symbol));
+        let cashflow = funds.cashflow.and_then(|m| m.get(&s.symbol));
         let mut hits = Vec::new();
         let mut ok_any = false;
         let mut ok_all = true;
@@ -458,7 +537,7 @@ pub fn run_screen(input: &MarketDataInput, expr: &ScreenExpression, top_n: usize
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string();
-            let pass = eval_rule(rule, series, s);
+            let pass = eval_rule(rule, series, s, income, cashflow);
             if pass {
                 hits.push(tid);
                 ok_any = true;
@@ -532,7 +611,13 @@ fn build_series_map(input: &MarketDataInput) -> HashMap<String, Vec<Bar>> {
     map
 }
 
-fn eval_rule(rule: &serde_json::Value, series: &[Bar], today: &StockDailyData) -> bool {
+fn eval_rule(
+    rule: &serde_json::Value,
+    series: &[Bar],
+    today: &StockDailyData,
+    income: Option<&IncomeSnapshot>,
+    cashflow: Option<&CashflowSnapshot>,
+) -> bool {
     let t = rule.get("type").and_then(|x| x.as_str()).unwrap_or("");
     match t {
         "ma_cross" => eval_ma_cross(rule, series),
@@ -544,8 +629,91 @@ fn eval_rule(rule: &serde_json::Value, series: &[Bar], today: &StockDailyData) -
         "ma_alignment" => eval_ma_alignment(rule, series),
         "price_change" => eval_price_change(rule, today),
         "period_return" => eval_period_return(rule, series),
+        "income_revenue" | "income_parent_np" | "income_deduct_np" => {
+            eval_income_metric(t, rule, income)
+        }
+        // 旧版单策略（metric 枚举）兼容
+        "fundamental_income" => {
+            let mapped = match rule.get("metric").and_then(|x| x.as_str()).unwrap_or("revenue")
+            {
+                "parent_np" => "income_parent_np",
+                "deduct_np" => "income_deduct_np",
+                _ => "income_revenue",
+            };
+            eval_income_metric(mapped, rule, income)
+        }
+        "cf_operating" | "cf_investing" | "cf_financing" => {
+            eval_cashflow_metric(t, rule, cashflow)
+        }
         _ => false,
     }
+}
+
+fn fund_range_ok(rule: &serde_json::Value, measure: &str, raw: Option<f64>) -> bool {
+    let Some(mut v) = raw.filter(|x| x.is_finite()) else {
+        return false;
+    };
+    // 当期值：界面按「亿元」设阈值
+    if measure == "value" {
+        v /= 1.0e8;
+    }
+    let lo = rule.get("min").and_then(|x| x.as_f64()).unwrap_or(0.0);
+    let hi = opt_cap(rule.get("max").and_then(|x| x.as_f64()));
+    v >= lo && v <= hi
+}
+
+fn eval_income_metric(
+    type_id: &str,
+    rule: &serde_json::Value,
+    fund: Option<&IncomeSnapshot>,
+) -> bool {
+    let Some(snap) = fund else {
+        return false;
+    };
+    let measure = rule
+        .get("measure")
+        .and_then(|x| x.as_str())
+        .unwrap_or("yoy");
+    let raw = match (type_id, measure) {
+        ("income_parent_np", "value") => snap.parent_np,
+        ("income_parent_np", "yoy") => snap.parent_np_yoy,
+        ("income_parent_np", "qoq") => snap.parent_np_qoq,
+        ("income_deduct_np", "value") => snap.deduct_np,
+        ("income_deduct_np", "yoy") => snap.deduct_np_yoy,
+        ("income_deduct_np", "qoq") => snap.deduct_np_qoq,
+        ("income_revenue", "value") => snap.revenue,
+        ("income_revenue", "qoq") => snap.revenue_qoq,
+        ("income_revenue", _) => snap.revenue_yoy,
+        _ => None,
+    };
+    fund_range_ok(rule, measure, raw)
+}
+
+fn eval_cashflow_metric(
+    type_id: &str,
+    rule: &serde_json::Value,
+    fund: Option<&CashflowSnapshot>,
+) -> bool {
+    let Some(snap) = fund else {
+        return false;
+    };
+    let measure = rule
+        .get("measure")
+        .and_then(|x| x.as_str())
+        .unwrap_or("yoy");
+    let raw = match (type_id, measure) {
+        ("cf_investing", "value") => snap.investing,
+        ("cf_investing", "yoy") => snap.investing_yoy,
+        ("cf_investing", "qoq") => snap.investing_qoq,
+        ("cf_financing", "value") => snap.financing,
+        ("cf_financing", "yoy") => snap.financing_yoy,
+        ("cf_financing", "qoq") => snap.financing_qoq,
+        ("cf_operating", "value") => snap.operating,
+        ("cf_operating", "qoq") => snap.operating_qoq,
+        ("cf_operating", _) => snap.operating_yoy,
+        _ => None,
+    };
+    fund_range_ok(rule, measure, raw)
 }
 
 fn eval_ma_cross(rule: &serde_json::Value, series: &[Bar]) -> bool {
@@ -1088,8 +1256,8 @@ mod tests {
     }
 
     #[test]
-    fn catalog_has_nine() {
-        assert_eq!(strategy_catalog().len(), 9);
+    fn catalog_has_fifteen() {
+        assert_eq!(strategy_catalog().len(), 15);
     }
 
     #[test]
@@ -1137,5 +1305,93 @@ mod tests {
         .unwrap();
         let r = run_screen(&MarketDataInput { snapshots: snaps }, &expr, 10);
         assert_eq!(r.match_count, 1);
+    }
+
+    #[test]
+    fn income_revenue_yoy_and_value() {
+        let snaps = vec![MarketDailySnapshot {
+            date: "2026-01-10".into(),
+            stocks: vec![bar(10.0, 4.0e7, 1.0)],
+        }];
+        let mut fund = HashMap::new();
+        fund.insert(
+            "000001.SZ".into(),
+            IncomeSnapshot {
+                report_date: "2025-09-30".into(),
+                fiscal_period: Some("Q3".into()),
+                revenue: Some(2.0e9), // 20 亿元
+                parent_np: Some(1.0e8),
+                deduct_np: Some(9.0e7),
+                revenue_yoy: Some(15.0),
+                parent_np_yoy: Some(5.0),
+                deduct_np_yoy: Some(-2.0),
+                revenue_qoq: Some(3.0),
+                parent_np_qoq: Some(1.0),
+                deduct_np_qoq: Some(0.5),
+            },
+        );
+        let expr_yoy = parse_expression(
+            r#"{"type":"income_revenue","measure":"yoy","min":10,"max":900}"#,
+        )
+        .unwrap();
+        let r = run_screen_with_fundamentals(
+            &MarketDataInput {
+                snapshots: snaps.clone(),
+            },
+            &expr_yoy,
+            10,
+            FundMaps {
+                income: Some(&fund),
+                cashflow: None,
+            },
+        );
+        assert_eq!(r.match_count, 1);
+
+        let expr_val = parse_expression(
+            r#"{"type":"income_revenue","measure":"value","min":15,"max":25}"#,
+        )
+        .unwrap();
+        let r2 = run_screen_with_fundamentals(
+            &MarketDataInput { snapshots: snaps.clone() },
+            &expr_val,
+            10,
+            FundMaps {
+                income: Some(&fund),
+                cashflow: None,
+            },
+        );
+        assert_eq!(r2.match_count, 1);
+
+        let mut cf = HashMap::new();
+        cf.insert(
+            "000001.SZ".into(),
+            CashflowSnapshot {
+                report_date: "2025-09-30".into(),
+                fiscal_period: Some("Q3".into()),
+                operating: Some(3.0e9),
+                investing: Some(-1.0e9),
+                financing: Some(-5.0e8),
+                operating_yoy: Some(12.0),
+                investing_yoy: Some(-8.0),
+                financing_yoy: Some(2.0),
+                operating_qoq: Some(1.0),
+                investing_qoq: Some(-3.0),
+                financing_qoq: Some(0.0),
+            },
+        );
+        let expr_cf = parse_expression(
+            r#"{"type":"cf_operating","measure":"yoy","min":10,"max":900}"#,
+        )
+        .unwrap();
+        let r3 = run_screen_with_fundamentals(
+            &MarketDataInput { snapshots: snaps },
+            &expr_cf,
+            10,
+            FundMaps {
+                income: None,
+                cashflow: Some(&cf),
+            },
+        );
+        assert_eq!(r3.match_count, 1);
     }
 }

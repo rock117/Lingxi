@@ -10,6 +10,7 @@
 pub mod calculator;
 pub mod data_source;
 pub mod domain;
+pub mod fundamentals;
 pub mod intraday_alert;
 pub mod intraday_push;
 pub mod mid_term;

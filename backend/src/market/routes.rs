@@ -23,6 +23,7 @@ use super::mid_term;
 use super::miana::MianaClient;
 use super::realtime_cache::RealtimeDayCache;
 use super::result_cache;
+use super::fundamentals;
 use super::screen::{self, ScreenExpression, ScreenResult, StrategyDef};
 use super::session;
 
@@ -311,7 +312,46 @@ async fn run_screen_with_db(
     let days = screen::required_lookback(expr).clamp(10, 120);
     let input = data_source::load_market_window(db, days).await?;
     let input = ensure_non_empty(input, days, false)?;
-    let mut result = screen::run_screen(&input, expr, top_n);
+
+    let income_map = if fundamentals::expression_needs_income(&expr.rules) {
+        match fundamentals::load_income_snapshots(db).await {
+            Ok(m) => {
+                tracing::info!(symbols = m.len(), "已加载利润表基本面");
+                Some(m)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "加载利润表失败，利润表规则将全部不命中");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let cashflow_map = if fundamentals::expression_needs_cashflow(&expr.rules) {
+        match fundamentals::load_cashflow_snapshots(db).await {
+            Ok(m) => {
+                tracing::info!(symbols = m.len(), "已加载现金流量表基本面");
+                Some(m)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "加载现金流量表失败，现金流规则将全部不命中");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let mut result = screen::run_screen_with_fundamentals(
+        &input,
+        expr,
+        top_n,
+        screen::FundMaps {
+            income: income_map.as_ref(),
+            cashflow: cashflow_map.as_ref(),
+        },
+    );
     let symbols: Vec<String> = result.items.iter().map(|i| i.symbol.clone()).collect();
     if let Ok(names) = data_source::load_stock_names(db, &symbols).await {
         for item in &mut result.items {

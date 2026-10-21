@@ -6,7 +6,7 @@
 
 ## 1. 概览
 
-当前内置 **9** 个可组合策略原子。App 可多选，默认 **全部满足（AND）**：
+当前内置 **15** 个可组合策略原子。App 可多选，默认 **全部满足（AND）**：
 
 ```json
 {
@@ -28,6 +28,12 @@
 | `ma_alignment` | 均线多头排列 | 短>中>长且同步向上 |
 | `price_change` | 涨跌幅区间 | 当日涨跌幅落在区间内 |
 | `period_return` | 日/周/月涨跌 | 近 N 桶每桶涨跌 + 总涨跌 |
+| `income_revenue` | 营业收入 | 当期值(亿元) / 同比% / 环比% |
+| `income_parent_np` | 归母净利润 | 当期值(亿元) / 同比% / 环比% |
+| `income_deduct_np` | 扣非净利润 | 当期值(亿元) / 同比% / 环比% |
+| `cf_operating` | 经营现金流净额 | 当期值(亿元) / 同比% / 环比% |
+| `cf_investing` | 投资现金流净额 | 当期值(亿元) / 同比% / 环比% |
+| `cf_financing` | 筹资现金流净额 | 当期值(亿元) / 同比% / 环比% |
 
 ### 公共股票池过滤（引擎内置）
 
@@ -187,7 +193,55 @@
 
 ---
 
-## 11. 组合示例
+## 11. 利润表三策略（营收 / 归母 / 扣非）
+
+数据表：`sc_stock_income_statement`（Miana 利润表，指标在 `payload` JSON）。三个独立原子，可单独组合。
+
+| type_id | 名称 | payload 字段 |
+|---|---|---|
+| `income_revenue` | 营业收入 | `operatingRevenue`（无则 `totalRevenue`） |
+| `income_parent_np` | 归母净利润 | `netProfitToParent` |
+| `income_deduct_np` | 扣非净利润 | `netProfitCorrected` |
+
+每个策略参数相同：
+
+| 度量 `measure` | 含义 |
+|---|---|
+| `value` | 最新报告期绝对值，阈值单位 **亿元** |
+| `yoy` | 同比 %：同 `fiscal_period` 且上年（或约 365 日同类型报告） |
+| `qoq` | 环比 %：按 `report_date` 上一份报告（披露口径，非单季拆分） |
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `measure` | `yoy` | 见上 |
+| `min` | 10 | 下限 |
+| `max` | 900 | 上限；**≥900 表示不限** |
+
+默认：对应指标同比 ≥ 10%。无财报或缺字段的股票该规则不命中。
+
+```json
+{ "type": "income_revenue", "measure": "yoy", "min": 10, "max": 900 }
+```
+
+### 现金流量表
+
+数据表：`sc_stock_cashflow_statement`。参数同利润表（`measure` / `min` / `max`）。
+
+| type_id | 名称 | payload 字段 |
+|---|---|---|
+| `cf_operating` | 经营现金流净额 | `netCashFromOperating` |
+| `cf_investing` | 投资现金流净额 | `netCashFromInvesting` |
+| `cf_financing` | 筹资现金流净额 | `netCashFromFinancing` |
+
+```json
+{ "type": "cf_operating", "measure": "yoy", "min": 10, "max": 900 }
+```
+
+资产负债表已入库，暂未做成筛选原子。
+
+---
+
+## 12. 组合示例
 
 ```json
 {
