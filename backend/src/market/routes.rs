@@ -23,6 +23,7 @@ use super::mid_term;
 use super::miana::MianaClient;
 use super::realtime_cache::RealtimeDayCache;
 use super::result_cache;
+use super::fund_stats::{self as fund_stats_svc, FundStatsMeta, FundStatsResult};
 use super::fundamentals;
 use super::screen::{self, ScreenExpression, ScreenResult, StrategyDef};
 use super::session;
@@ -160,6 +161,36 @@ pub async fn intraday_alerts(
 #[get("/api/market/strategies")]
 pub async fn strategies() -> Json<Vec<StrategyDef>> {
     Json(screen::strategy_catalog())
+}
+
+/// `GET /api/market/fund-stats/meta` — 期次选项与默认年份。
+#[get("/api/market/fund-stats/meta")]
+pub async fn fund_stats_meta(
+    db: &rocket::State<DatabaseConnection>,
+) -> AppResult<Json<FundStatsMeta>> {
+    let meta = fund_stats_svc::load_meta(db.inner())
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(Json(meta))
+}
+
+/// `GET /api/market/fund-stats?year=2024&period=FY` — 全市场赚钱/增长/现金流占比。
+#[get("/api/market/fund-stats?<year>&<period>")]
+pub async fn fund_stats_query(
+    db: &rocket::State<DatabaseConnection>,
+    year: Option<i32>,
+    period: Option<&str>,
+) -> AppResult<Json<FundStatsResult>> {
+    let result = fund_stats_svc::compute_stats(db.inner(), year, period)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    tracing::info!(
+        year = result.year,
+        period = %result.period,
+        np_pct = ?result.net_profit.positive_pct,
+        "全市场财报统计"
+    );
+    Ok(Json(result))
 }
 
 #[derive(Debug, Deserialize)]

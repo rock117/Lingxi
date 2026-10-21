@@ -2,6 +2,8 @@ package com.lingxi.app.data.api
 
 import com.lingxi.app.data.model.Condition
 import com.lingxi.app.data.model.CreateConditionRequest
+import com.lingxi.app.data.model.FundStatsMeta
+import com.lingxi.app.data.model.FundStatsResult
 import com.lingxi.app.data.model.HealthResponse
 import com.lingxi.app.data.model.MsiResult
 import com.lingxi.app.data.model.MttResult
@@ -68,6 +70,15 @@ interface LingxiApi {
 
     @GET("api/market/stock")
     suspend fun stockDetail(@Query("symbol") symbol: String): StockDetail
+
+    @GET("api/market/fund-stats/meta")
+    suspend fun fundStatsMeta(): FundStatsMeta
+
+    @GET("api/market/fund-stats")
+    suspend fun fundStats(
+        @Query("year") year: Int? = null,
+        @Query("period") period: String? = null,
+    ): FundStatsResult
 
     @GET("api/notifications")
     suspend fun listNotifications(

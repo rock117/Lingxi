@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.ShowChart
@@ -28,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lingxi.app.condition.StrategyListScreen
+import com.lingxi.app.market.FundStatsScreen
 import com.lingxi.app.market.SentimentScreen
 import com.lingxi.app.notification.NotificationListScreen
 import com.lingxi.app.viewmodel.MarketViewModel
@@ -51,6 +53,7 @@ fun HomeScreen(
     val title = when (tab) {
         0 -> "短线情绪 · 中期结构"
         1 -> "选股策略"
+        2 -> "A股财报统计"
         else -> "通知"
     }
 
@@ -82,6 +85,12 @@ fun HomeScreen(
                 NavigationBarItem(
                     selected = tab == 2,
                     onClick = { tab = 2 },
+                    icon = { Icon(Icons.Default.Assessment, contentDescription = null) },
+                    label = { Text("财报") },
+                )
+                NavigationBarItem(
+                    selected = tab == 3,
+                    onClick = { tab = 3 },
                     icon = {
                         BadgedBox(
                             badge = {
@@ -118,6 +127,7 @@ fun HomeScreen(
                     onEditSaved = onEditScreen,
                     onRunSaved = onRunScreen,
                 )
+                2 -> FundStatsScreen(viewModel = marketViewModel)
                 else -> NotificationListScreen(viewModel = notificationViewModel)
             }
         }

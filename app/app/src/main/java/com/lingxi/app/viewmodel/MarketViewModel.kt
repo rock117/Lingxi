@@ -4,8 +4,11 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.lingxi.app.data.api.ApiClient
+import com.lingxi.app.data.model.FundStatsMeta
+import com.lingxi.app.data.model.FundStatsResult
 import com.lingxi.app.data.model.MsiResult
 import com.lingxi.app.data.model.MttResult
+import com.lingxi.app.data.model.PeriodOption
 import com.lingxi.app.data.model.ServerConfig
 import com.lingxi.app.data.prefs.ServerPrefs
 import kotlinx.coroutines.Job
@@ -36,6 +39,15 @@ data class MarketUiState(
     val refreshIntervalMinutes: Int = 5,
 )
 
+data class FundStatsUiState(
+    val loading: Boolean = false,
+    val meta: FundStatsMeta? = null,
+    val result: FundStatsResult? = null,
+    val selectedYear: Int? = null,
+    val selectedPeriod: String = "FY",
+    val error: String? = null,
+)
+
 class MarketViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = ServerPrefs(application)
 
@@ -44,6 +56,9 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _ui = MutableStateFlow(MarketUiState())
     val ui: StateFlow<MarketUiState> = _ui.asStateFlow()
+
+    private val _fundStats = MutableStateFlow(FundStatsUiState())
+    val fundStats: StateFlow<FundStatsUiState> = _fundStats.asStateFlow()
 
     private var autoRefreshJob: Job? = null
     private val shanghaiZone = ZoneId.of("Asia/Shanghai")
@@ -60,6 +75,81 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
                 }
         }
         refresh()
+    }
+
+    fun loadFundStatsIfNeeded() {
+        if (_fundStats.value.meta != null || _fundStats.value.loading) return
+        refreshFundStats()
+    }
+
+    fun selectFundPeriod(period: String) {
+        if (period == _fundStats.value.selectedPeriod) return
+        // 换期次后年份列表变化，交给后端选该期次最新年
+        _fundStats.value = _fundStats.value.copy(
+            selectedPeriod = period,
+            selectedYear = null,
+        )
+        refreshFundStats(keepSelection = true)
+    }
+
+    fun selectFundYear(year: Int) {
+        if (year == _fundStats.value.selectedYear) return
+        _fundStats.value = _fundStats.value.copy(selectedYear = year)
+        refreshFundStats(keepSelection = true)
+    }
+
+    fun refreshFundStats(keepSelection: Boolean = false) {
+        viewModelScope.launch {
+            val cfg = prefs.configFlow.first()
+            val prev = _fundStats.value
+            _fundStats.value = prev.copy(loading = true, error = null)
+            try {
+                val api = ApiClient.create(cfg)
+                val meta = if (prev.meta == null || !keepSelection) {
+                    runCatching { api.fundStatsMeta() }.getOrNull() ?: prev.meta
+                } else {
+                    prev.meta
+                }
+                val period = when {
+                    keepSelection -> prev.selectedPeriod
+                    meta != null -> meta.defaultPeriod
+                    else -> prev.selectedPeriod
+                }
+                val year = when {
+                    keepSelection -> prev.selectedYear // 可为 null，后端按该期次最新年
+                    meta?.defaultYear != null -> meta.defaultYear
+                    else -> prev.selectedYear
+                }
+                val result = api.fundStats(year = year, period = period)
+                val years = result.availableYears.ifEmpty {
+                    meta?.availableYears.orEmpty()
+                }
+                _fundStats.value = FundStatsUiState(
+                    loading = false,
+                    meta = meta?.copy(availableYears = years)
+                        ?: FundStatsMeta(
+                            periods = listOf(
+                                PeriodOption("Q1", "一季报"),
+                                PeriodOption("H1", "中报"),
+                                PeriodOption("Q3", "三季报"),
+                                PeriodOption("FY", "年报"),
+                            ),
+                            defaultYear = result.year,
+                            defaultPeriod = result.period,
+                            availableYears = years,
+                        ),
+                    result = result,
+                    selectedYear = result.year,
+                    selectedPeriod = result.period,
+                    error = null,
+                )
+            } catch (e: Exception) {
+                _fundStats.value = prev.copy(
+                    loading = false,
+                    error = e.message ?: e.javaClass.simpleName,
+                )
+            }
+        }
     }
 
     fun refresh(days: Int = 5) {

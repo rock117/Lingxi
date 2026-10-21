@@ -34,7 +34,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -49,6 +48,7 @@ import com.lingxi.app.data.model.comboOutlook
 import com.lingxi.app.data.model.mttStatusLabel
 import com.lingxi.app.data.model.scoreBandLabel
 import com.lingxi.app.data.model.scoreDegreeLabel
+import com.lingxi.app.ui.PercentProgress
 import com.lingxi.app.viewmodel.MarketViewModel
 import kotlin.math.roundToInt
 
@@ -386,17 +386,10 @@ private fun FactorDetailRow(factor: FactorRow) {
 
 @Composable
 private fun ScoreProgress(score: Double, height: Dp = 8.dp) {
-    LinearProgressIndicator(
-        progress = { (score / 100.0).toFloat().coerceIn(0f, 1f) },
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(height)
-            .clip(RoundedCornerShape(4.dp)),
+    PercentProgress(
+        percent = score,
+        height = height,
         color = msiTone(score),
-        trackColor = MaterialTheme.colorScheme.surfaceVariant,
-        strokeCap = StrokeCap.Butt,
-        gapSize = 0.dp,
-        drawStopIndicator = {},
     )
 }
 
