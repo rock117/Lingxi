@@ -343,6 +343,21 @@ async fn run_screen_with_db(
         None
     };
 
+    let balance_map = if fundamentals::expression_needs_balance(&expr.rules) {
+        match fundamentals::load_balance_snapshots(db).await {
+            Ok(m) => {
+                tracing::info!(symbols = m.len(), "已加载资产负债表基本面");
+                Some(m)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "加载资产负债表失败，资产负债规则将全部不命中");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let mut result = screen::run_screen_with_fundamentals(
         &input,
         expr,
@@ -350,6 +365,7 @@ async fn run_screen_with_db(
         screen::FundMaps {
             income: income_map.as_ref(),
             cashflow: cashflow_map.as_ref(),
+            balance: balance_map.as_ref(),
         },
     );
     let symbols: Vec<String> = result.items.iter().map(|i| i.symbol.clone()).collect();

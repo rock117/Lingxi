@@ -1,5 +1,5 @@
-//! 利润表 / 现金流量表基本面快照（值、同比、环比）。
-//! 表：`sc_stock_income_statement`、`sc_stock_cashflow_statement`（payload 对齐 Miana）。
+//! 利润表 / 现金流量表 / 资产负债表基本面快照（值、同比、环比）。
+//! 表：`sc_stock_income_statement`、`sc_stock_cashflow_statement`、`sc_stock_balance_sheet`。
 
 use std::collections::HashMap;
 
@@ -7,7 +7,7 @@ use chrono::NaiveDate;
 use sea_orm::{DatabaseBackend, DatabaseConnection, FromQueryResult, Statement};
 use serde_json::Value;
 
-/// 利润表：营收 / 归母 / 扣非。
+/// 利润表：营收 / 归母 / 扣非 / 研发费用。
 #[derive(Debug, Clone, Default)]
 pub struct IncomeSnapshot {
     #[allow(dead_code)]
@@ -17,12 +17,15 @@ pub struct IncomeSnapshot {
     pub revenue: Option<f64>,
     pub parent_np: Option<f64>,
     pub deduct_np: Option<f64>,
+    pub rd: Option<f64>,
     pub revenue_yoy: Option<f64>,
     pub parent_np_yoy: Option<f64>,
     pub deduct_np_yoy: Option<f64>,
+    pub rd_yoy: Option<f64>,
     pub revenue_qoq: Option<f64>,
     pub parent_np_qoq: Option<f64>,
     pub deduct_np_qoq: Option<f64>,
+    pub rd_qoq: Option<f64>,
 }
 
 /// 现金流量表：经营 / 投资 / 筹资净额。
@@ -43,6 +46,18 @@ pub struct CashflowSnapshot {
     pub financing_qoq: Option<f64>,
 }
 
+/// 资产负债表：应收账款等。
+#[derive(Debug, Clone, Default)]
+pub struct BalanceSnapshot {
+    #[allow(dead_code)]
+    pub report_date: String,
+    #[allow(dead_code)]
+    pub fiscal_period: Option<String>,
+    pub receivable: Option<f64>,
+    pub receivable_yoy: Option<f64>,
+    pub receivable_qoq: Option<f64>,
+}
+
 #[derive(Debug, FromQueryResult)]
 struct FundRow {
     symbol: String,
@@ -59,7 +74,10 @@ struct PeriodRef {
     a: Option<f64>,
     b: Option<f64>,
     c: Option<f64>,
+    d: Option<f64>,
 }
+
+type ExtractFn = fn(&Value) -> (Option<f64>, Option<f64>, Option<f64>, Option<f64>);
 
 /// 每只股票取最近若干报告期，计算最新一期的值 / 同比 / 环比。
 pub async fn load_income_snapshots(
@@ -81,12 +99,15 @@ pub async fn load_income_snapshots(
                 revenue: latest.a,
                 parent_np: latest.b,
                 deduct_np: latest.c,
+                rd: latest.d,
                 revenue_yoy: pct_change(latest.a, yoy.and_then(|p| p.a)),
                 parent_np_yoy: pct_change(latest.b, yoy.and_then(|p| p.b)),
                 deduct_np_yoy: pct_change(latest.c, yoy.and_then(|p| p.c)),
+                rd_yoy: pct_change(latest.d, yoy.and_then(|p| p.d)),
                 revenue_qoq: pct_change(latest.a, qoq.and_then(|p| p.a)),
                 parent_np_qoq: pct_change(latest.b, qoq.and_then(|p| p.b)),
                 deduct_np_qoq: pct_change(latest.c, qoq.and_then(|p| p.c)),
+                rd_qoq: pct_change(latest.d, qoq.and_then(|p| p.d)),
             },
         );
     }
@@ -124,10 +145,35 @@ pub async fn load_cashflow_snapshots(
     Ok(out)
 }
 
+pub async fn load_balance_snapshots(
+    db: &DatabaseConnection,
+) -> Result<HashMap<String, BalanceSnapshot>, sea_orm::DbErr> {
+    let by_symbol = load_period_map(db, "sc_stock_balance_sheet", extract_balance).await?;
+    let mut out = HashMap::with_capacity(by_symbol.len());
+    for (symbol, periods) in by_symbol {
+        let Some(latest) = periods.first() else {
+            continue;
+        };
+        let yoy = find_yoy(latest, &periods);
+        let qoq = periods.get(1);
+        out.insert(
+            symbol,
+            BalanceSnapshot {
+                report_date: latest.report_date.format("%Y-%m-%d").to_string(),
+                fiscal_period: latest.fiscal_period.clone(),
+                receivable: latest.a,
+                receivable_yoy: pct_change(latest.a, yoy.and_then(|p| p.a)),
+                receivable_qoq: pct_change(latest.a, qoq.and_then(|p| p.a)),
+            },
+        );
+    }
+    Ok(out)
+}
+
 async fn load_period_map(
     db: &DatabaseConnection,
     table: &str,
-    extract: fn(&Value) -> (Option<f64>, Option<f64>, Option<f64>),
+    extract: ExtractFn,
 ) -> Result<HashMap<String, Vec<PeriodRef>>, sea_orm::DbErr> {
     let sql = format!(
         r#"
@@ -156,7 +202,7 @@ ORDER BY symbol, report_date DESC
 
     let mut by_symbol: HashMap<String, Vec<PeriodRef>> = HashMap::new();
     for row in rows {
-        let (a, b, c) = extract(&row.payload);
+        let (a, b, c, d) = extract(&row.payload);
         by_symbol.entry(row.symbol).or_default().push(PeriodRef {
             report_date: row.report_date,
             fiscal_year: row.fiscal_year,
@@ -164,25 +210,40 @@ ORDER BY symbol, report_date DESC
             a,
             b,
             c,
+            d,
         });
     }
     Ok(by_symbol)
 }
 
-fn extract_income(payload: &Value) -> (Option<f64>, Option<f64>, Option<f64>) {
+fn extract_income(payload: &Value) -> (Option<f64>, Option<f64>, Option<f64>, Option<f64>) {
     (
         json_f64(payload, &["operatingRevenue", "operating_revenue"])
             .or_else(|| json_f64(payload, &["totalRevenue", "total_revenue"])),
         json_f64(payload, &["netProfitToParent", "net_profit_to_parent"]),
         json_f64(payload, &["netProfitCorrected", "net_profit_corrected"]),
+        json_f64(
+            payload,
+            &["researchAndDevelopment", "research_and_development"],
+        ),
     )
 }
 
-fn extract_cashflow(payload: &Value) -> (Option<f64>, Option<f64>, Option<f64>) {
+fn extract_cashflow(payload: &Value) -> (Option<f64>, Option<f64>, Option<f64>, Option<f64>) {
     (
         json_f64(payload, &["netCashFromOperating", "net_cash_from_operating"]),
         json_f64(payload, &["netCashFromInvesting", "net_cash_from_investing"]),
         json_f64(payload, &["netCashFromFinancing", "net_cash_from_financing"]),
+        None,
+    )
+}
+
+fn extract_balance(payload: &Value) -> (Option<f64>, Option<f64>, Option<f64>, Option<f64>) {
+    (
+        json_f64(payload, &["accountsReceivable", "accounts_receivable"]),
+        None,
+        None,
+        None,
     )
 }
 
@@ -252,7 +313,11 @@ pub fn expression_needs_income(expr_rules: &[Value]) -> bool {
         r.get("type").and_then(|t| t.as_str()).is_some_and(|t| {
             matches!(
                 t,
-                "income_revenue" | "income_parent_np" | "income_deduct_np" | "fundamental_income"
+                "income_revenue"
+                    | "income_parent_np"
+                    | "income_deduct_np"
+                    | "income_rd"
+                    | "fundamental_income"
             )
         })
     })
@@ -266,30 +331,44 @@ pub fn expression_needs_cashflow(expr_rules: &[Value]) -> bool {
     })
 }
 
+pub fn expression_needs_balance(expr_rules: &[Value]) -> bool {
+    expr_rules.iter().any(|r| {
+        r.get("type")
+            .and_then(|t| t.as_str())
+            .is_some_and(|t| t == "bs_receivable")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
 
     #[test]
-    fn parse_income_and_cashflow() {
+    fn parse_income_cashflow_balance() {
         let income = json!({
             "operatingRevenue": "1000000000.00",
             "netProfitToParent": "100000000",
-            "netProfitCorrected": "80000000"
+            "netProfitCorrected": "80000000",
+            "researchAndDevelopment": "50000000"
         });
-        let (rev, _, _) = extract_income(&income);
+        let (rev, _, _, rd) = extract_income(&income);
         assert!((rev.unwrap() - 1e9).abs() < 1.0);
+        assert!((rd.unwrap() - 5e7).abs() < 1.0);
 
         let cf = json!({
             "netCashFromOperating": "500000000",
             "netCashFromInvesting": "-200000000",
             "netCashFromFinancing": "-100000000"
         });
-        let (op, inv, fin) = extract_cashflow(&cf);
+        let (op, inv, fin, _) = extract_cashflow(&cf);
         assert!((op.unwrap() - 5e8).abs() < 1.0);
         assert!((inv.unwrap() + 2e8).abs() < 1.0);
         assert!((fin.unwrap() + 1e8).abs() < 1.0);
+
+        let bs = json!({ "accountsReceivable": "123456789.0" });
+        let (ar, _, _, _) = extract_balance(&bs);
+        assert!((ar.unwrap() - 123456789.0).abs() < 1.0);
         assert!((pct_change(Some(110.0), Some(100.0)).unwrap() - 10.0).abs() < 1e-9);
     }
 }

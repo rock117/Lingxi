@@ -60,8 +60,8 @@ private fun atomCategory(typeId: String): AtomChipCategory = when (typeId) {
     "rsi" -> AtomChipCategory.Momentum
     "volume_spike" -> AtomChipCategory.Volume
     "price_change", "period_return" -> AtomChipCategory.Range
-    "income_revenue", "income_parent_np", "income_deduct_np", "fundamental_income",
-    "cf_operating", "cf_investing", "cf_financing" ->
+    "income_revenue", "income_parent_np", "income_deduct_np", "income_rd", "fundamental_income",
+    "cf_operating", "cf_investing", "cf_financing", "bs_receivable" ->
         AtomChipCategory.Fundamental
     else -> AtomChipCategory.Trend
 }

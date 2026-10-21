@@ -6,13 +6,14 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use super::domain::{MarketDataInput, StockDailyData};
-use super::fundamentals::{CashflowSnapshot, IncomeSnapshot};
+use super::fundamentals::{BalanceSnapshot, CashflowSnapshot, IncomeSnapshot};
 
 /// 选股时可选的基本面快照。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FundMaps<'a> {
     pub income: Option<&'a HashMap<String, IncomeSnapshot>>,
     pub cashflow: Option<&'a HashMap<String, CashflowSnapshot>>,
+    pub balance: Option<&'a HashMap<String, BalanceSnapshot>>,
 }
 
 const AMOUNT_MIN: f64 = 3.0e7;
@@ -340,6 +341,11 @@ pub fn strategy_catalog() -> Vec<StrategyDef> {
             "当期值(亿元)或同比、环比",
         ),
         fund_metric_def(
+            "income_rd",
+            "研发费用",
+            "当期值(亿元)或同比、环比",
+        ),
+        fund_metric_def(
             "cf_operating",
             "经营现金流净额",
             "当期值(亿元)或同比、环比",
@@ -352,6 +358,11 @@ pub fn strategy_catalog() -> Vec<StrategyDef> {
         fund_metric_def(
             "cf_financing",
             "筹资现金流净额",
+            "当期值(亿元)或同比、环比",
+        ),
+        fund_metric_def(
+            "bs_receivable",
+            "应收账款",
             "当期值(亿元)或同比、环比",
         ),
     ]
@@ -487,8 +498,9 @@ pub fn required_lookback(expr: &ScreenExpression) -> usize {
                 };
                 need = need.max(n.saturating_mul(per).saturating_add(per + 2));
             }
-            "income_revenue" | "income_parent_np" | "income_deduct_np"
-            | "cf_operating" | "cf_investing" | "cf_financing" => {}
+            "income_revenue" | "income_parent_np" | "income_deduct_np" | "income_rd"
+            | "cf_operating" | "cf_investing" | "cf_financing"
+            | "bs_receivable" => {}
             _ => {}
         }
     }
@@ -528,6 +540,7 @@ pub fn run_screen_with_fundamentals(
         };
         let income = funds.income.and_then(|m| m.get(&s.symbol));
         let cashflow = funds.cashflow.and_then(|m| m.get(&s.symbol));
+        let balance = funds.balance.and_then(|m| m.get(&s.symbol));
         let mut hits = Vec::new();
         let mut ok_any = false;
         let mut ok_all = true;
@@ -537,7 +550,7 @@ pub fn run_screen_with_fundamentals(
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string();
-            let pass = eval_rule(rule, series, s, income, cashflow);
+            let pass = eval_rule(rule, series, s, income, cashflow, balance);
             if pass {
                 hits.push(tid);
                 ok_any = true;
@@ -617,6 +630,7 @@ fn eval_rule(
     today: &StockDailyData,
     income: Option<&IncomeSnapshot>,
     cashflow: Option<&CashflowSnapshot>,
+    balance: Option<&BalanceSnapshot>,
 ) -> bool {
     let t = rule.get("type").and_then(|x| x.as_str()).unwrap_or("");
     match t {
@@ -629,7 +643,7 @@ fn eval_rule(
         "ma_alignment" => eval_ma_alignment(rule, series),
         "price_change" => eval_price_change(rule, today),
         "period_return" => eval_period_return(rule, series),
-        "income_revenue" | "income_parent_np" | "income_deduct_np" => {
+        "income_revenue" | "income_parent_np" | "income_deduct_np" | "income_rd" => {
             eval_income_metric(t, rule, income)
         }
         // 旧版单策略（metric 枚举）兼容
@@ -645,6 +659,7 @@ fn eval_rule(
         "cf_operating" | "cf_investing" | "cf_financing" => {
             eval_cashflow_metric(t, rule, cashflow)
         }
+        "bs_receivable" => eval_balance_metric(t, rule, balance),
         _ => false,
     }
 }
@@ -681,6 +696,9 @@ fn eval_income_metric(
         ("income_deduct_np", "value") => snap.deduct_np,
         ("income_deduct_np", "yoy") => snap.deduct_np_yoy,
         ("income_deduct_np", "qoq") => snap.deduct_np_qoq,
+        ("income_rd", "value") => snap.rd,
+        ("income_rd", "yoy") => snap.rd_yoy,
+        ("income_rd", "qoq") => snap.rd_qoq,
         ("income_revenue", "value") => snap.revenue,
         ("income_revenue", "qoq") => snap.revenue_qoq,
         ("income_revenue", _) => snap.revenue_yoy,
@@ -711,6 +729,27 @@ fn eval_cashflow_metric(
         ("cf_operating", "value") => snap.operating,
         ("cf_operating", "qoq") => snap.operating_qoq,
         ("cf_operating", _) => snap.operating_yoy,
+        _ => None,
+    };
+    fund_range_ok(rule, measure, raw)
+}
+
+fn eval_balance_metric(
+    type_id: &str,
+    rule: &serde_json::Value,
+    fund: Option<&BalanceSnapshot>,
+) -> bool {
+    let Some(snap) = fund else {
+        return false;
+    };
+    let measure = rule
+        .get("measure")
+        .and_then(|x| x.as_str())
+        .unwrap_or("yoy");
+    let raw = match (type_id, measure) {
+        ("bs_receivable", "value") => snap.receivable,
+        ("bs_receivable", "qoq") => snap.receivable_qoq,
+        ("bs_receivable", _) => snap.receivable_yoy,
         _ => None,
     };
     fund_range_ok(rule, measure, raw)
@@ -1256,8 +1295,8 @@ mod tests {
     }
 
     #[test]
-    fn catalog_has_fifteen() {
-        assert_eq!(strategy_catalog().len(), 15);
+    fn catalog_has_seventeen() {
+        assert_eq!(strategy_catalog().len(), 17);
     }
 
     #[test]
@@ -1322,12 +1361,15 @@ mod tests {
                 revenue: Some(2.0e9), // 20 亿元
                 parent_np: Some(1.0e8),
                 deduct_np: Some(9.0e7),
+                rd: Some(5.0e8),
                 revenue_yoy: Some(15.0),
                 parent_np_yoy: Some(5.0),
                 deduct_np_yoy: Some(-2.0),
+                rd_yoy: Some(20.0),
                 revenue_qoq: Some(3.0),
                 parent_np_qoq: Some(1.0),
                 deduct_np_qoq: Some(0.5),
+                rd_qoq: Some(4.0),
             },
         );
         let expr_yoy = parse_expression(
@@ -1343,6 +1385,7 @@ mod tests {
             FundMaps {
                 income: Some(&fund),
                 cashflow: None,
+                balance: None,
             },
         );
         assert_eq!(r.match_count, 1);
@@ -1358,6 +1401,7 @@ mod tests {
             FundMaps {
                 income: Some(&fund),
                 cashflow: None,
+                balance: None,
             },
         );
         assert_eq!(r2.match_count, 1);
@@ -1384,14 +1428,42 @@ mod tests {
         )
         .unwrap();
         let r3 = run_screen_with_fundamentals(
-            &MarketDataInput { snapshots: snaps },
+            &MarketDataInput { snapshots: snaps.clone() },
             &expr_cf,
             10,
             FundMaps {
                 income: None,
                 cashflow: Some(&cf),
+                balance: None,
             },
         );
         assert_eq!(r3.match_count, 1);
+
+        let mut bs = HashMap::new();
+        bs.insert(
+            "000001.SZ".into(),
+            BalanceSnapshot {
+                report_date: "2025-09-30".into(),
+                fiscal_period: Some("Q3".into()),
+                receivable: Some(1.5e9),
+                receivable_yoy: Some(8.0),
+                receivable_qoq: Some(2.0),
+            },
+        );
+        let expr_ar = parse_expression(
+            r#"{"type":"bs_receivable","measure":"yoy","min":5,"max":900}"#,
+        )
+        .unwrap();
+        let r4 = run_screen_with_fundamentals(
+            &MarketDataInput { snapshots: snaps },
+            &expr_ar,
+            10,
+            FundMaps {
+                income: None,
+                cashflow: None,
+                balance: Some(&bs),
+            },
+        );
+        assert_eq!(r4.match_count, 1);
     }
 }

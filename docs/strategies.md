@@ -3,7 +3,7 @@
 本文档描述条件选股已落地的个股日 K 策略：原理、参数、信号条件与 expression JSON。  
 实现与 API 以 [`docs/screen.md`](./screen.md)、`backend/src/market/screen.rs` 为准。
 
-另有原子策略 **涨跌幅区间** `price_change`、**日/周/月涨跌** `period_return`、利润表三项（营收/归母/扣非）、现金流量表三项（经营/投资/筹资净额），详见 `screen.md`。
+另有原子策略 **涨跌幅区间** `price_change`、**日/周/月涨跌** `period_return`、利润表（营收/归母/扣非/研发）、现金流量表三项、资产负债表应收账款，详见 `screen.md`。
 
 ## 目录
 

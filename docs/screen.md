@@ -6,7 +6,7 @@
 
 ## 1. 概览
 
-当前内置 **15** 个可组合策略原子。App 可多选，默认 **全部满足（AND）**：
+当前内置 **17** 个可组合策略原子。App 可多选，默认 **全部满足（AND）**：
 
 ```json
 {
@@ -31,9 +31,11 @@
 | `income_revenue` | 营业收入 | 当期值(亿元) / 同比% / 环比% |
 | `income_parent_np` | 归母净利润 | 当期值(亿元) / 同比% / 环比% |
 | `income_deduct_np` | 扣非净利润 | 当期值(亿元) / 同比% / 环比% |
+| `income_rd` | 研发费用 | 当期值(亿元) / 同比% / 环比% |
 | `cf_operating` | 经营现金流净额 | 当期值(亿元) / 同比% / 环比% |
 | `cf_investing` | 投资现金流净额 | 当期值(亿元) / 同比% / 环比% |
 | `cf_financing` | 筹资现金流净额 | 当期值(亿元) / 同比% / 环比% |
+| `bs_receivable` | 应收账款 | 当期值(亿元) / 同比% / 环比% |
 
 ### 公共股票池过滤（引擎内置）
 
@@ -193,15 +195,16 @@
 
 ---
 
-## 11. 利润表三策略（营收 / 归母 / 扣非）
+## 11. 利润表 / 现金流 / 资产负债财务策略
 
-数据表：`sc_stock_income_statement`（Miana 利润表，指标在 `payload` JSON）。三个独立原子，可单独组合。
+数据表：`sc_stock_income_statement`（Miana 利润表，指标在 `payload` JSON）。独立原子，可单独组合。
 
 | type_id | 名称 | payload 字段 |
 |---|---|---|
 | `income_revenue` | 营业收入 | `operatingRevenue`（无则 `totalRevenue`） |
 | `income_parent_np` | 归母净利润 | `netProfitToParent` |
 | `income_deduct_np` | 扣非净利润 | `netProfitCorrected` |
+| `income_rd` | 研发费用 | `researchAndDevelopment` |
 
 每个策略参数相同：
 
@@ -237,7 +240,17 @@
 { "type": "cf_operating", "measure": "yoy", "min": 10, "max": 900 }
 ```
 
-资产负债表已入库，暂未做成筛选原子。
+### 资产负债表
+
+数据表：`sc_stock_balance_sheet`。参数同上。
+
+| type_id | 名称 | payload 字段 |
+|---|---|---|
+| `bs_receivable` | 应收账款 | `accountsReceivable` |
+
+```json
+{ "type": "bs_receivable", "measure": "yoy", "min": 0, "max": 30 }
+```
 
 ---
 
