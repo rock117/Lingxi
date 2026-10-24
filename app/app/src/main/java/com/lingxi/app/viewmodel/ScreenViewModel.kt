@@ -10,9 +10,12 @@ import com.lingxi.app.data.model.ScreenRequest
 import com.lingxi.app.data.model.ScreenResult
 import com.lingxi.app.data.model.StockAnalyze
 import com.lingxi.app.data.model.StockDetail
+import com.lingxi.app.data.model.StockSearchHit
 import com.lingxi.app.data.model.StrategyDef
 import com.lingxi.app.data.model.UpdateConditionRequest
 import com.lingxi.app.data.prefs.ServerPrefs
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -69,6 +72,17 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
     private val _stockAnalyzeError = MutableStateFlow<String?>(null)
     val stockAnalyzeError: StateFlow<String?> = _stockAnalyzeError.asStateFlow()
 
+    private val _stockSearchQuery = MutableStateFlow("")
+    val stockSearchQuery: StateFlow<String> = _stockSearchQuery.asStateFlow()
+
+    private val _stockSearchHits = MutableStateFlow<List<StockSearchHit>>(emptyList())
+    val stockSearchHits: StateFlow<List<StockSearchHit>> = _stockSearchHits.asStateFlow()
+
+    private val _stockSearchLoading = MutableStateFlow(false)
+    val stockSearchLoading: StateFlow<Boolean> = _stockSearchLoading.asStateFlow()
+
+    private var stockSearchJob: Job? = null
+
     init {
         refresh()
     }
@@ -81,6 +95,30 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
     fun clearStockAnalyze() {
         _stockAnalyze.value = null
         _stockAnalyzeError.value = null
+        _stockSearchQuery.value = ""
+        _stockSearchHits.value = emptyList()
+    }
+
+    fun onStockSearchQueryChange(q: String) {
+        _stockSearchQuery.value = q
+        stockSearchJob?.cancel()
+        val trimmed = q.trim()
+        if (trimmed.isEmpty()) {
+            _stockSearchHits.value = emptyList()
+            _stockSearchLoading.value = false
+            return
+        }
+        stockSearchJob = viewModelScope.launch {
+            delay(280)
+            _stockSearchLoading.value = true
+            runCatching {
+                val api = ApiClient.create(prefs.configFlow.first())
+                _stockSearchHits.value = api.stocksSearch(trimmed).items
+            }.onFailure {
+                _stockSearchHits.value = emptyList()
+            }
+            _stockSearchLoading.value = false
+        }
     }
 
     fun loadStockDetail(symbol: String) {

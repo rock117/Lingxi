@@ -172,6 +172,95 @@ impl TencentClient {
     }
 }
 
+/// 腾讯实时报价快照（`qt.gtimg.cn`，用于换手率等）。
+#[derive(Debug, Clone, Default)]
+pub struct TencentQuoteSnap {
+    pub current: Option<f64>,
+    pub open: Option<f64>,
+    pub high: Option<f64>,
+    pub low: Option<f64>,
+    pub pre_close: Option<f64>,
+    pub change_pct: Option<f64>,
+    pub change_amount: Option<f64>,
+    /// 成交量（手）
+    pub volume_hand: Option<f64>,
+    /// 成交额（元）；接口为万元时已 ×10000
+    pub amount: Option<f64>,
+    pub turnover_rate: Option<f64>,
+    pub amplitude: Option<f64>,
+}
+
+impl TencentClient {
+    /// `GET https://qt.gtimg.cn/q=sh600519`，GBK，`~` 分隔。
+    pub async fn fetch_quote_snap(&self, tencent_code: &str) -> Result<TencentQuoteSnap> {
+        self.limiter.acquire().await;
+        let url = format!("https://qt.gtimg.cn/q={tencent_code}");
+        info!(target: "tencent_quote", %tencent_code, %url, "腾讯实时报价请求");
+        let http_resp = self
+            .http
+            .get(&url)
+            .header("Referer", "https://gu.qq.com/")
+            .send()
+            .await
+            .with_context(|| format!("请求腾讯报价失败 c={tencent_code}"))?;
+        let status = http_resp.status();
+        let bytes = http_resp
+            .bytes()
+            .await
+            .with_context(|| format!("读取腾讯报价正文失败 c={tencent_code}"))?;
+        let (cow, _, _) = GBK.decode(&bytes);
+        let text = cow.into_owned();
+        if !status.is_success() {
+            return Err(anyhow!(
+                "腾讯报价 HTTP {} c={} body={}",
+                status.as_u16(),
+                tencent_code,
+                truncate(&text, 200)
+            ));
+        }
+        let snap = parse_quote_payload(&text).ok_or_else(|| {
+            anyhow!(
+                "腾讯报价解析失败 c={tencent_code} body={}",
+                truncate(&text, 200)
+            )
+        })?;
+        Ok(snap)
+    }
+}
+
+fn parse_f64(s: &str) -> Option<f64> {
+    let t = s.trim();
+    if t.is_empty() {
+        return None;
+    }
+    t.parse::<f64>().ok().filter(|v| v.is_finite())
+}
+
+fn parse_quote_payload(text: &str) -> Option<TencentQuoteSnap> {
+    // v_sh600519="51~名~码~现价~..."
+    let start = text.find("=\"")?;
+    let inner = text[start + 2..].trim().trim_end_matches(';').trim_matches('"');
+    let f: Vec<&str> = inner.split('~').collect();
+    if f.len() < 39 {
+        return None;
+    }
+    Some(TencentQuoteSnap {
+        current: parse_f64(f[3]),
+        pre_close: parse_f64(f[4]),
+        open: parse_f64(f[5]),
+        change_amount: parse_f64(f.get(31).copied().unwrap_or("")),
+        change_pct: parse_f64(f.get(32).copied().unwrap_or("")),
+        high: parse_f64(f.get(33).copied().unwrap_or("")),
+        low: parse_f64(f.get(34).copied().unwrap_or("")),
+        volume_hand: parse_f64(f.get(36).copied().unwrap_or(""))
+            .or_else(|| parse_f64(f[6])),
+        // 37 成交额（万元）
+        amount: parse_f64(f.get(37).copied().unwrap_or("")).map(|w| w * 10_000.0),
+        turnover_rate: parse_f64(f.get(38).copied().unwrap_or("")),
+        amplitude: parse_f64(f.get(43).copied().unwrap_or("")),
+    })
+}
+
 /// `600519.SH` → `sh600519`；北交所返回 None。
 pub fn symbol_to_tencent_code(symbol: &str) -> Option<String> {
     let (code, suffix) = symbol.split_once('.')?;

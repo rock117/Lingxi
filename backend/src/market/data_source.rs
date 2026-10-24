@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use chrono::NaiveDate;
 use sea_orm::{DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
+use serde::Serialize;
 
 use super::domain::{MarketDailySnapshot, MarketDataInput, StockDailyData};
 use super::miana::MianaClient;
@@ -338,6 +339,85 @@ pub async fn load_market_window_hybrid(
     Ok(input)
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct StockSearchHit {
+    pub symbol: String,
+    pub name: String,
+    pub code: String,
+    pub name_pinyin: String,
+}
+
+/// 按 symbol / code / 名称 / 拼音首字母模糊搜活跃股票（`sc_stock`）。
+pub async fn search_stocks(
+    db: &DatabaseConnection,
+    q: &str,
+    limit: u32,
+) -> Result<Vec<StockSearchHit>, DbErr> {
+    let q = q.trim();
+    if q.is_empty() {
+        return Ok(Vec::new());
+    }
+    let limit = limit.clamp(1, 50);
+    let q_lower = q.to_lowercase();
+    let like = format!("%{q_lower}%");
+
+    #[derive(Debug, FromQueryResult)]
+    struct Row {
+        symbol: String,
+        name: String,
+        code: String,
+        name_pinyin: String,
+    }
+
+    // 拼音列存小写；symbol/code/name 用不区分大小写匹配
+    let sql = r#"
+SELECT symbol,
+       COALESCE(name, '') AS name,
+       COALESCE(code, '') AS code,
+       COALESCE(name_pinyin, '') AS name_pinyin
+FROM sc_stock
+WHERE is_active = TRUE
+  AND (
+    LOWER(symbol) LIKE $1
+    OR LOWER(code) LIKE $1
+    OR name LIKE $2
+    OR name_pinyin LIKE $1
+  )
+ORDER BY
+  CASE
+    WHEN LOWER(code) = $3 THEN 0
+    WHEN LOWER(symbol) = $3 OR LOWER(symbol) LIKE $3 || '.%' THEN 1
+    WHEN name_pinyin = $3 THEN 2
+    WHEN name_pinyin LIKE $3 || '%' THEN 3
+    ELSE 4
+  END,
+  symbol
+LIMIT $4
+"#;
+    let rows = Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        sql,
+        [
+            like.clone().into(),
+            format!("%{q}%").into(),
+            q_lower.into(),
+            (limit as i64).into(),
+        ],
+    ))
+    .all(db)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| StockSearchHit {
+            symbol: r.symbol,
+            name: r.name,
+            code: r.code,
+            name_pinyin: r.name_pinyin,
+        })
+        .collect())
+}
+
 /// 批量查证券简称：`sc_stock.name`（按 symbol）。
 pub async fn load_stock_names(
     db: &DatabaseConnection,
@@ -373,6 +453,90 @@ pub async fn load_stock_names(
         .await?;
 
     Ok(rows.into_iter().map(|r| (r.symbol, r.name)).collect())
+}
+
+/// 单票最近一个开市日的日 K 摘要（含成交量、昨收）。
+#[derive(Debug, Clone, Serialize)]
+pub struct StockDayQuote {
+    pub date: String,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub pre_close: f64,
+    pub change_pct: f64,
+    pub change_amount: f64,
+    pub amount: f64,
+    /// 成交量（股，与 `sc_stock_kline_d1_bfq.volume` 一致）
+    pub volume: f64,
+    /// 振幅 %：(高-低)/昨收
+    pub amplitude: f64,
+}
+
+pub async fn load_stock_latest_quote(
+    db: &DatabaseConnection,
+    symbol: &str,
+) -> Result<Option<StockDayQuote>, DbErr> {
+    #[derive(Debug, FromQueryResult)]
+    struct Row {
+        trade_date: NaiveDate,
+        open: f64,
+        high: f64,
+        low: f64,
+        close: f64,
+        pre_close: f64,
+        amount: f64,
+        volume: f64,
+    }
+
+    let as_of = session::shanghai_today_naive();
+    let sql = r#"
+SELECT
+    k.trade_date,
+    k.open::double precision AS open,
+    k.high::double precision AS high,
+    k.low::double precision AS low,
+    k.close::double precision AS close,
+    k.pre_close::double precision AS pre_close,
+    k.amount::double precision AS amount,
+    k.volume::double precision AS volume
+FROM sc_stock_kline_d1_bfq k
+INNER JOIN sc_trade_calendar c
+    ON c.trade_date = k.trade_date AND c.is_open = TRUE
+WHERE k.symbol = $1
+  AND k.trade_date <= $2
+ORDER BY k.trade_date DESC
+LIMIT 1
+"#;
+    let row = Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        sql,
+        [symbol.into(), as_of.into()],
+    ))
+    .one(db)
+    .await?;
+
+    Ok(row.map(|r| {
+        let chg = change_pct(r.close, r.pre_close);
+        let amp = if r.pre_close > 1e-10 {
+            (r.high - r.low) / r.pre_close * 100.0
+        } else {
+            0.0
+        };
+        StockDayQuote {
+            date: r.trade_date.format("%Y-%m-%d").to_string(),
+            open: r.open,
+            high: r.high,
+            low: r.low,
+            close: r.close,
+            pre_close: r.pre_close,
+            change_pct: chg,
+            change_amount: r.close - r.pre_close,
+            amount: r.amount,
+            volume: r.volume,
+            amplitude: amp,
+        }
+    }))
 }
 
 /// 单票最近 `days` 个开市日 K 线（按日期升序）。

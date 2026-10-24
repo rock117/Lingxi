@@ -81,6 +81,37 @@ data class StockDetail(
     val bars: List<StockBar> = emptyList(),
 )
 
+@Serializable
+data class StockSearchHit(
+    val symbol: String = "",
+    val name: String = "",
+    val code: String = "",
+    @SerialName("name_pinyin") val namePinyin: String = "",
+)
+
+@Serializable
+data class StockSearchResult(
+    val total: Int = 0,
+    val items: List<StockSearchHit> = emptyList(),
+)
+
+@Serializable
+data class StockAnalyzeQuote(
+    val date: String = "",
+    val open: Double = 0.0,
+    val high: Double = 0.0,
+    val low: Double = 0.0,
+    val close: Double = 0.0,
+    val current: Double = 0.0,
+    @SerialName("pre_close") val preClose: Double = 0.0,
+    @SerialName("change_pct") val changePct: Double = 0.0,
+    @SerialName("change_amount") val changeAmount: Double = 0.0,
+    val amount: Double = 0.0,
+    val volume: Double = 0.0,
+    val amplitude: Double = 0.0,
+    @SerialName("turnover_rate") val turnoverRate: Double? = null,
+)
+
 /** `GET /api/market/stock/analyze` */
 @Serializable
 data class StockAnalyze(
@@ -93,6 +124,7 @@ data class StockAnalyze(
     @SerialName("detail_last_time") val detailLastTime: String? = null,
     @SerialName("detail_tick_count") val detailTickCount: Long = 0,
     @SerialName("detail_updated_at") val detailUpdatedAt: String? = null,
+    val quote: StockAnalyzeQuote? = null,
     val bars: List<StockBar> = emptyList(),
     val analysis: String = "",
     @SerialName("ai_enabled") val aiEnabled: Boolean = false,

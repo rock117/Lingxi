@@ -273,6 +273,38 @@ pub struct StockDetailOut {
     pub bars: Vec<StockBarOut>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct StockSearchOut {
+    pub total: usize,
+    pub items: Vec<data_source::StockSearchHit>,
+}
+
+/// `GET /api/market/stocks/search?q=gzmt&limit=20` — 代码 / 名称 / 拼音首字母搜活跃股票。
+#[get("/api/market/stocks/search?<q>&<limit>")]
+pub async fn stocks_search(
+    db: &rocket::State<DatabaseConnection>,
+    q: Option<&str>,
+    limit: Option<u32>,
+) -> AppResult<Json<StockSearchOut>> {
+    let q = q.unwrap_or("").trim();
+    if q.is_empty() {
+        return Ok(Json(StockSearchOut {
+            total: 0,
+            items: Vec::new(),
+        }));
+    }
+    if q.chars().count() > 32 {
+        return Err(AppError::BadRequest("q 过长".into()));
+    }
+    let items = data_source::search_stocks(db.inner(), q, limit.unwrap_or(20))
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(Json(StockSearchOut {
+        total: items.len(),
+        items,
+    }))
+}
+
 /// `GET /api/market/stock/analyze?symbol=600519.SH` — 近5日K线 + 成交明细 + AI 分析。
 #[get("/api/market/stock/analyze?<symbol>")]
 pub async fn stock_analyze_query(

@@ -23,6 +23,27 @@ pub struct StockAnalyzeBar {
     pub amount: f64,
 }
 
+/// 当日（或最近开市日）行情摘要，供 App 报价区展示。
+#[derive(Debug, Clone, Serialize)]
+pub struct StockAnalyzeQuote {
+    pub date: String,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    /// 现价：有成交明细用最新一笔，否则用收盘
+    pub current: f64,
+    pub pre_close: f64,
+    pub change_pct: f64,
+    pub change_amount: f64,
+    pub amount: f64,
+    /// 成交量（股）
+    pub volume: f64,
+    pub amplitude: f64,
+    /// 换手率 %；库内无流通股本时为 null
+    pub turnover_rate: Option<f64>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct StockAnalyzeOut {
     pub symbol: String,
@@ -35,6 +56,8 @@ pub struct StockAnalyzeOut {
     pub detail_last_time: Option<String>,
     pub detail_tick_count: i64,
     pub detail_updated_at: Option<String>,
+    /// 当日价量摘要；无 K 线时为 null
+    pub quote: Option<StockAnalyzeQuote>,
     pub bars: Vec<StockAnalyzeBar>,
     /// AI 分析正文；AI 未启用或失败时为错误说明
     pub analysis: String,
@@ -361,11 +384,100 @@ pub async fn analyze_stock(
         format!("{} {}", used_trade_date.format("%Y-%m-%d"), t)
     });
 
+    let day_quote = data_source::load_stock_latest_quote(db, symbol).await?;
+    let tx_snap = if let Some(tc) = tencent::symbol_to_tencent_code(symbol) {
+        match tencent.fetch_quote_snap(&tc).await {
+            Ok(s) => Some(s),
+            Err(e) => {
+                warn!(%symbol, error = %e, "腾讯实时报价失败，仅用日K/明细");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let quote = day_quote.map(|q| {
+        let current = tx_snap
+            .as_ref()
+            .and_then(|s| s.current)
+            .or(summary.last_price.filter(|p| p.is_finite() && *p > 0.0))
+            .unwrap_or(q.close);
+        let open = tx_snap.as_ref().and_then(|s| s.open).unwrap_or(q.open);
+        let pre_close = tx_snap
+            .as_ref()
+            .and_then(|s| s.pre_close)
+            .filter(|p| *p > 1e-10)
+            .unwrap_or(q.pre_close);
+        let high = tx_snap
+            .as_ref()
+            .and_then(|s| s.high)
+            .or(summary.high)
+            .map(|h| h.max(q.high))
+            .unwrap_or(q.high);
+        let low = tx_snap
+            .as_ref()
+            .and_then(|s| s.low)
+            .or(summary.low)
+            .map(|l| l.min(q.low))
+            .unwrap_or(q.low);
+        let (change_pct, change_amount) = match (
+            tx_snap.as_ref().and_then(|s| s.change_pct),
+            tx_snap.as_ref().and_then(|s| s.change_amount),
+        ) {
+            (Some(p), Some(a)) => (p, a),
+            _ if pre_close > 1e-10 => (
+                (current / pre_close - 1.0) * 100.0,
+                current - pre_close,
+            ),
+            _ => (q.change_pct, q.change_amount),
+        };
+        let amount = tx_snap
+            .as_ref()
+            .and_then(|s| s.amount)
+            .filter(|a| *a > 0.0)
+            .unwrap_or(q.amount);
+        // 日K volume 为股；腾讯为手 → 股
+        let volume = tx_snap
+            .as_ref()
+            .and_then(|s| s.volume_hand)
+            .map(|h| h * 100.0)
+            .filter(|v| *v > 0.0)
+            .unwrap_or(q.volume);
+        let amplitude = tx_snap
+            .as_ref()
+            .and_then(|s| s.amplitude)
+            .unwrap_or_else(|| {
+                if pre_close > 1e-10 {
+                    (high - low) / pre_close * 100.0
+                } else {
+                    q.amplitude
+                }
+            });
+        let turnover_rate = tx_snap.as_ref().and_then(|s| s.turnover_rate);
+        StockAnalyzeQuote {
+            date: q.date,
+            open,
+            high,
+            low,
+            close: q.close,
+            current,
+            pre_close,
+            change_pct,
+            change_amount,
+            amount,
+            volume,
+            amplitude,
+            turnover_rate,
+        }
+    });
+
     let payload = json!({
         "symbol": symbol,
         "name": name,
         "trade_date": used_trade_date.format("%Y-%m-%d").to_string(),
         "detail_source": detail_source,
+        "quote": quote,
         "bars_5d": bars,
         "detail_summary": summary,
     });
@@ -403,6 +515,7 @@ pub async fn analyze_stock(
         detail_last_time,
         detail_tick_count: details.len() as i64,
         detail_updated_at,
+        quote,
         bars,
         analysis,
         ai_enabled,

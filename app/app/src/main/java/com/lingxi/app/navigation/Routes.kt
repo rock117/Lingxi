@@ -9,7 +9,8 @@ object Routes {
     const val SCREEN_EDIT = "screen/edit/{id}"
     const val SCREEN_RESULT = "screen/result/{conditionId}"
     const val STOCK_DETAIL = "stock/detail/{symbol}"
-    const val STOCK_ANALYZE = "stock/analyze/{symbol}"
+    const val STOCK_ANALYZE = "stock/analyze"
+    const val STOCK_ANALYZE_SYMBOL = "stock/analyze/{symbol}"
 
     fun conditionEdit(id: Long) = "condition/edit/$id"
 
@@ -29,8 +30,11 @@ object Routes {
     fun stockDetail(symbol: String): String =
         "stock/detail/${symbol.replace('.', '~')}"
 
-    fun stockAnalyze(symbol: String): String =
-        "stock/analyze/${symbol.replace('.', '~')}"
+    fun stockAnalyze(symbol: String? = null): String {
+        val s = symbol?.trim().orEmpty()
+        return if (s.isEmpty()) STOCK_ANALYZE
+        else "stock/analyze/${s.replace('.', '~')}"
+    }
 
     fun decodeStockSymbol(encoded: String): String =
         encoded.replace('~', '.')

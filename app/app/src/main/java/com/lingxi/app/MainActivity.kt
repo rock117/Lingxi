@@ -192,15 +192,27 @@ private fun LingxiNav(
                 },
             )
         }
+        composable(Routes.STOCK_ANALYZE) {
+            StockAnalyzeScreen(
+                viewModel = screenViewModel,
+                initialSymbol = null,
+                showBack = true,
+                onBack = {
+                    screenViewModel.clearStockAnalyze()
+                    navController.popBackStack()
+                },
+            )
+        }
         composable(
-            route = Routes.STOCK_ANALYZE,
+            route = Routes.STOCK_ANALYZE_SYMBOL,
             arguments = listOf(navArgument("symbol") { type = NavType.StringType }),
         ) { entry ->
             val encoded = entry.arguments?.getString("symbol").orEmpty()
             val symbol = Routes.decodeStockSymbol(encoded)
             StockAnalyzeScreen(
                 viewModel = screenViewModel,
-                symbol = symbol,
+                initialSymbol = symbol,
+                showBack = true,
                 onBack = {
                     screenViewModel.clearStockAnalyze()
                     navController.popBackStack()

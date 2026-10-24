@@ -103,8 +103,10 @@ backend/src/market/
 
 ### 4.3 App
 
-- 个股详情页按钮「AI 分析个股」→ `StockAnalyzeScreen`。  
-- 页面展示：**最新一笔时间**、来源（实时/库）、近 5 日 K、AI 正文；支持「重新分析」。
+- 首页底部 Tab **「分析」**：独立入口，可按 **代码 / 名称 / 拼音首字母** 搜索选股后分析。  
+- 搜索接口：`GET /api/market/stocks/search?q=`（读 `sc_stock`，含 `name_pinyin`）。  
+- 个股详情「AI 分析个股」仍可跳转同一分析页（带初始 symbol）。  
+- 页面展示：最新一笔时间、来源、近 5 日 K、AI 正文；支持「重新分析」。
 
 ---
 

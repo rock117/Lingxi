@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Assessment
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.ShowChart
@@ -28,6 +29,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.lingxi.app.condition.StockAnalyzeScreen
 import com.lingxi.app.condition.StrategyListScreen
 import com.lingxi.app.market.FundStatsScreen
 import com.lingxi.app.market.SentimentScreen
@@ -49,11 +51,22 @@ fun HomeScreen(
 ) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val unread by notificationViewModel.unreadCount.collectAsStateWithLifecycle()
+    val analyze by screenViewModel.stockAnalyze.collectAsStateWithLifecycle()
 
     val title = when (tab) {
         0 -> "短线情绪 · 中期结构"
         1 -> "选股策略"
-        2 -> "A股财报统计"
+        2 -> {
+            val n = analyze?.name?.takeIf { it.isNotBlank() }
+            val s = analyze?.symbol?.takeIf { it.isNotBlank() }
+            when {
+                n != null && s != null -> "$n  $s"
+                n != null -> n
+                s != null -> s
+                else -> "AI 分析个股"
+            }
+        }
+        3 -> "A股财报统计"
         else -> "通知"
     }
 
@@ -85,12 +98,18 @@ fun HomeScreen(
                 NavigationBarItem(
                     selected = tab == 2,
                     onClick = { tab = 2 },
-                    icon = { Icon(Icons.Default.Assessment, contentDescription = null) },
-                    label = { Text("财报") },
+                    icon = { Icon(Icons.Default.AutoAwesome, contentDescription = null) },
+                    label = { Text("分析") },
                 )
                 NavigationBarItem(
                     selected = tab == 3,
                     onClick = { tab = 3 },
+                    icon = { Icon(Icons.Default.Assessment, contentDescription = null) },
+                    label = { Text("财报") },
+                )
+                NavigationBarItem(
+                    selected = tab == 4,
+                    onClick = { tab = 4 },
                     icon = {
                         BadgedBox(
                             badge = {
@@ -127,7 +146,13 @@ fun HomeScreen(
                     onEditSaved = onEditScreen,
                     onRunSaved = onRunScreen,
                 )
-                2 -> FundStatsScreen(viewModel = marketViewModel)
+                2 -> StockAnalyzeScreen(
+                    viewModel = screenViewModel,
+                    initialSymbol = null,
+                    showBack = false,
+                    embedded = true,
+                )
+                3 -> FundStatsScreen(viewModel = marketViewModel)
                 else -> NotificationListScreen(viewModel = notificationViewModel)
             }
         }
