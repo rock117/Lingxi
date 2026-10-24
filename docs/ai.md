@@ -52,7 +52,11 @@
 backend/src/ai/
   mod.rs       导出 AiClient
   client.rs    OpenAI 兼容 chat + explain / draft_screen
-  prompts.rs   系统提示模板（含 stock_analyze_system）
+  prompts.rs   加载/拼装系统提示（个股四维优先读配置文件）
+
+backend/config/
+  ai_prompts.toml    个股四维 system 提示词（盘面/短线/基本面/财报；可改后重启）
+                     框架参考公开 equity / A-share Agent Skills，并约束「只吃 JSON、短文、禁买卖指令」
 
 backend/src/market/
   stock_analyze.rs   近5日K + 成交明细 + AI
@@ -60,7 +64,8 @@ backend/src/market/
   tencent.rs         腾讯当日分笔（东财失败回退）
 ```
 
-启动时：`AiClient::from_config(&cfg)` → `rocket.manage(ai)`；`EastmoneyClient` 同样 manage。
+启动时：`AiClient::from_config(&cfg)` → `rocket.manage(ai)`；`EastmoneyClient` 同样 manage。  
+提示词查找顺序：`AI_PROMPTS_PATH` → `config/ai_prompts.toml`（相对 cwd）→ `backend/config/…` → `<exe_dir>/config/…`；均失败则用内置默认。
 
 ### 3.1 `AiClient`
 
@@ -117,7 +122,7 @@ backend/src/market/
 | Tab「基本面」 | PE/PB/市值、营收净利与同比、现金流/资产负债摘要 + 基本面 AI |
 | Tab「财务报表」 | 近几期利润/现金流/资产负债表 + 财报 AI |
 
-一次请求返回四维事实；AI 输出 JSON 四段（`tape` / `short_term` / `fundamentals` / `statements`）填入各 Tab。
+一次请求返回四维事实；AI **四套独立 system 提示词**（见 `backend/config/ai_prompts.toml` 的 `stock_analyze.*`），并行调用后分别填入各 Tab。改提示词后重启 backend 即可，无需改代码。
 
 ---
 

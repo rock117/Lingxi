@@ -101,6 +101,10 @@ fun StockAnalyzeScreen(
     var selectedSymbol by remember { mutableStateOf(initialSymbol.orEmpty()) }
     var selectedName by remember { mutableStateOf("") }
     var dimTab by rememberSaveable { mutableIntStateOf(0) }
+    // 已选股时默认收起搜索，把可视区让给分析；点「换股」再展开
+    var searchOpen by rememberSaveable {
+        mutableStateOf(initialSymbol.isNullOrBlank())
+    }
 
     LaunchedEffect(initialSymbol) {
         val sym = initialSymbol?.trim().orEmpty()
@@ -126,9 +130,13 @@ fun StockAnalyzeScreen(
         selectedSymbol = hit.symbol
         selectedName = hit.name
         dimTab = 0
+        searchOpen = false
         viewModel.onStockSearchQueryChange("")
         viewModel.loadStockAnalyze(hit.symbol)
     }
+
+    val showSearchPanel =
+        !hasStock || searchOpen || query.isNotBlank() || hits.isNotEmpty()
 
     val body: @Composable (PaddingValues) -> Unit = { padding ->
         Column(
@@ -136,42 +144,65 @@ fun StockAnalyzeScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            // —— 固定顶区 ——
-            StockSearchBar(
-                query = query,
-                loading = searchLoading,
-                onQueryChange = viewModel::onStockSearchQueryChange,
-                onClear = { viewModel.onStockSearchQueryChange("") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-            )
-
-            if (hits.isNotEmpty()) {
-                SearchHitList(
-                    hits = hits,
-                    onSelect = ::selectHit,
+            // 吸顶仅保留：换股搜索（按需）或一行精简身份条 + Tab
+            if (showSearchPanel) {
+                StockSearchBar(
+                    query = query,
+                    loading = searchLoading,
+                    onQueryChange = {
+                        searchOpen = true
+                        viewModel.onStockSearchQueryChange(it)
+                    },
+                    onClear = { viewModel.onStockSearchQueryChange("") },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .padding(bottom = 4.dp),
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
                 )
-            }
-
-            if (hasStock) {
-                IdentityAndQuoteHeader(
+                if (hasStock && query.isBlank() && hits.isEmpty()) {
+                    Text(
+                        "收起搜索",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .padding(horizontal = 20.dp)
+                            .padding(bottom = 4.dp)
+                            .clickable { searchOpen = false },
+                    )
+                }
+                if (hits.isNotEmpty()) {
+                    SearchHitList(
+                        hits = hits,
+                        onSelect = ::selectHit,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                            .padding(bottom = 4.dp),
+                    )
+                }
+            } else if (hasStock) {
+                CompactStockChrome(
                     name = displayName,
                     symbol = displaySymbol,
                     quote = result?.quote,
                     loading = loading && result == null,
                     showRefresh = result != null || error != null,
                     refreshLoading = loading && result != null,
+                    onSearch = { searchOpen = true },
                     onRefresh = { viewModel.loadStockAnalyze(selectedSymbol) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
                 )
+            }
 
+            if (hasStock && !showSearchPanel) {
+                AnalyzeDimTabs(
+                    selected = dimTab,
+                    onSelect = { dimTab = it },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else if (hasStock && showSearchPanel && hits.isEmpty()) {
+                // 搜索展开但无结果列表时仍保留 Tab，避免整页被搜索占满
                 AnalyzeDimTabs(
                     selected = dimTab,
                     onSelect = { dimTab = it },
@@ -179,7 +210,6 @@ fun StockAnalyzeScreen(
                 )
             }
 
-            // —— Tab 内容 ——
             when {
                 !hasStock && hits.isEmpty() -> {
                     EmptyHint(modifier = Modifier.weight(1f))
@@ -227,10 +257,12 @@ fun StockAnalyzeScreen(
                 }
                 hasStock && result != null -> {
                     val r = result!!
+                    // 完整报价随 Tab 内容滚动，不再钉在顶区
                     when (AnalyzeDim.entries[dimTab.coerceIn(0, AnalyzeDim.entries.lastIndex)]) {
                         AnalyzeDim.Tape -> TapeTabContent(
                             result = r,
                             loading = loading,
+                            quote = r.quote,
                             modifier = Modifier.weight(1f),
                         )
                         AnalyzeDim.ShortTerm -> ShortTermTabContent(
@@ -238,6 +270,7 @@ fun StockAnalyzeScreen(
                             aiEnabled = r.aiEnabled,
                             aiModel = r.aiModel,
                             loading = loading,
+                            quote = r.quote,
                             modifier = Modifier.weight(1f),
                         )
                         AnalyzeDim.Fundament -> FundamentalsTabContent(
@@ -245,6 +278,7 @@ fun StockAnalyzeScreen(
                             aiEnabled = r.aiEnabled,
                             aiModel = r.aiModel,
                             loading = loading,
+                            quote = r.quote,
                             modifier = Modifier.weight(1f),
                         )
                         AnalyzeDim.Statements -> StatementsTabContent(
@@ -252,6 +286,7 @@ fun StockAnalyzeScreen(
                             aiEnabled = r.aiEnabled,
                             aiModel = r.aiModel,
                             loading = loading,
+                            quote = r.quote,
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -337,59 +372,80 @@ private fun AnalyzeDimTabs(
     }
 }
 
+/** 已选股时的精简吸顶条：名称 + 涨跌 + 换股/刷新，完整报价随列表滚动。 */
 @Composable
-private fun IdentityAndQuoteHeader(
+private fun CompactStockChrome(
     name: String,
     symbol: String,
     quote: StockAnalyzeQuote?,
     loading: Boolean,
     showRefresh: Boolean,
     refreshLoading: Boolean,
+    onSearch: () -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    name.ifBlank { "—" },
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                name.ifBlank { "—" },
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 if (symbol.isNotBlank()) {
                     Text(
                         symbol,
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (loading && quote == null) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "行情加载中…",
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
-            if (showRefresh) {
-                IconButton(onClick = onRefresh, enabled = !refreshLoading && symbol.isNotBlank()) {
-                    if (refreshLoading) {
-                        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新")
-                    }
+        }
+        if (quote != null) {
+            val chg = QuoteColors.of(quote.changePct)
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    formatAnalyzePrice(quote.current),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = chg,
+                )
+                Text(
+                    formatAnalyzePct(quote.changePct),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = chg,
+                )
+            }
+            Spacer(modifier = Modifier.width(4.dp))
+        }
+        IconButton(onClick = onSearch) {
+            Icon(Icons.Default.Search, contentDescription = "换股搜索")
+        }
+        if (showRefresh) {
+            IconButton(onClick = onRefresh, enabled = !refreshLoading && symbol.isNotBlank()) {
+                if (refreshLoading) {
+                    CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Default.Refresh, contentDescription = "刷新")
                 }
             }
-        }
-
-        if (quote != null) {
-            Spacer(modifier = Modifier.height(8.dp))
-            DayQuotePanel(quote)
-        } else if (loading) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                "行情加载中…",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
@@ -398,6 +454,7 @@ private fun IdentityAndQuoteHeader(
 private fun TapeTabContent(
     result: StockAnalyze,
     loading: Boolean,
+    quote: StockAnalyzeQuote? = null,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -405,6 +462,9 @@ private fun TapeTabContent(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        if (quote != null) {
+            item { DayQuotePanel(quote) }
+        }
         item {
             MetaPanel(
                 tradeDate = result.tradeDate,
@@ -460,6 +520,7 @@ private fun ShortTermTabContent(
     aiEnabled: Boolean,
     aiModel: String?,
     loading: Boolean,
+    quote: StockAnalyzeQuote? = null,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -467,6 +528,9 @@ private fun ShortTermTabContent(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        if (quote != null) {
+            item { DayQuotePanel(quote) }
+        }
         item {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -543,6 +607,7 @@ private fun FundamentalsTabContent(
     aiEnabled: Boolean,
     aiModel: String?,
     loading: Boolean,
+    quote: StockAnalyzeQuote? = null,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -550,6 +615,9 @@ private fun FundamentalsTabContent(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        if (quote != null) {
+            item { DayQuotePanel(quote) }
+        }
         item {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -620,6 +688,7 @@ private fun StatementsTabContent(
     aiEnabled: Boolean,
     aiModel: String?,
     loading: Boolean,
+    quote: StockAnalyzeQuote? = null,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -627,6 +696,9 @@ private fun StatementsTabContent(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        if (quote != null) {
+            item { DayQuotePanel(quote) }
+        }
         item {
             AnalysisPanel(
                 title = "财报 AI",

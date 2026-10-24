@@ -300,10 +300,16 @@ def remote_build(ssh: paramiko.SSHClient, remote_dir: str, app_dir: str):
         check=True,
     )
     # 安装到运行目录，供 systemd ExecStart
-    run_ssh(ssh, f"mkdir -p {app_dir} {app_dir.rstrip('/')}/log")
+    run_ssh(ssh, f"mkdir -p {app_dir} {app_dir.rstrip('/')}/log {app_dir.rstrip('/')}/config")
     run_ssh(
         ssh,
         f"install -m 755 {remote_dir}/target/release/{BINARY_NAME} {app_dir}/{BINARY_NAME}",
+        check=True,
+    )
+    # AI 提示词：WorkingDirectory=app_dir，读 config/ai_prompts.toml
+    run_ssh(
+        ssh,
+        f"install -m 644 {remote_dir}/config/ai_prompts.toml {app_dir}/config/ai_prompts.toml",
         check=True,
     )
 

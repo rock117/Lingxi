@@ -577,14 +577,21 @@ pub async fn analyze_stock(
         analysis: String::new(),
     };
 
-    let payload = json!({
+    let meta = json!({
         "symbol": symbol,
         "name": name,
         "trade_date": used_trade_date.format("%Y-%m-%d").to_string(),
-        "detail_source": detail_source,
+    });
+    let tape_payload = json!({
+        "meta": meta,
         "quote": quote,
         "bars_5d": bars,
+        "detail_source": detail_source,
         "detail_summary": summary,
+    });
+    let short_payload = json!({
+        "meta": meta,
+        "quote": quote,
         "short_term": {
             "change_5d_pct": short_term.change_5d_pct,
             "change_10d_pct": short_term.change_10d_pct,
@@ -595,6 +602,10 @@ pub async fn analyze_stock(
             "amount_vs_5d_avg": short_term.amount_vs_5d_avg,
             "bars": &short_term.bars,
         },
+    });
+    let fund_payload = json!({
+        "meta": meta,
+        "quote": quote,
         "fundamentals": {
             "report_date": &fundamentals_dim.report_date,
             "fiscal_period": &fundamentals_dim.fiscal_period,
@@ -615,6 +626,9 @@ pub async fn analyze_stock(
             "total_liabilities": fundamentals_dim.total_liabilities,
             "total_equity": fundamentals_dim.total_equity,
         },
+    });
+    let stmt_payload = json!({
+        "meta": meta,
         "statements": {
             "income": &statements_dim.income,
             "cashflow": &statements_dim.cashflow,
@@ -627,41 +641,57 @@ pub async fn analyze_stock(
             let msg = "AI 未启用：请配置 AI_API_KEY。已返回各维事实数据。".to_string();
             (msg.clone(), msg.clone(), msg.clone(), msg, None, false)
         } else {
-            let system = crate::ai::prompts::stock_analyze_system();
-            let user = format!(
-                "请根据以下 JSON 输出四维解读 JSON（tape/short_term/fundamentals/statements）：\n{}",
-                serde_json::to_string_pretty(&payload).unwrap_or_default()
+            // 四维各自提示词 + 并行请求，侧重点分离且总耗时接近单次上限
+            let tape_sys = crate::ai::prompts::stock_analyze_tape_system();
+            let short_sys = crate::ai::prompts::stock_analyze_short_term_system();
+            let fund_sys = crate::ai::prompts::stock_analyze_fundamentals_system();
+            let stmt_sys = crate::ai::prompts::stock_analyze_statements_system();
+            let tape_user = format!(
+                "请解读盘面：\n{}",
+                serde_json::to_string_pretty(&tape_payload).unwrap_or_default()
             );
-            match ai.chat(&system, &user).await {
-                Ok(text) => {
-                    let parts = parse_dim_analyses(&text);
-                    (
-                        parts.tape,
-                        parts.short_term,
-                        parts.fundamentals,
-                        parts.statements,
-                        Some(ai.model_name().to_string()),
-                        true,
-                    )
-                }
-                Err(e) => {
-                    warn!(error = %e, "个股 AI 分析失败");
-                    let msg = format!("AI 分析失败：{e}。下方仍可查看各维事实数据。");
-                    (msg.clone(), msg.clone(), msg.clone(), msg, None, true)
-                }
-            }
+            let short_user = format!(
+                "请解读短线走势：\n{}",
+                serde_json::to_string_pretty(&short_payload).unwrap_or_default()
+            );
+            let fund_user = format!(
+                "请解读基本面：\n{}",
+                serde_json::to_string_pretty(&fund_payload).unwrap_or_default()
+            );
+            let stmt_user = format!(
+                "请解读财务报表：\n{}",
+                serde_json::to_string_pretty(&stmt_payload).unwrap_or_default()
+            );
+            let (tape_r, short_r, fund_r, stmt_r) = tokio::join!(
+                ai.chat(&tape_sys, &tape_user),
+                ai.chat(&short_sys, &short_user),
+                ai.chat(&fund_sys, &fund_user),
+                ai.chat(&stmt_sys, &stmt_user),
+            );
+            let map_err = |dim: &str, e: anyhow::Error| {
+                warn!(error = %e, %dim, "个股 AI 分维分析失败");
+                format!("AI 分析失败：{e}。下方仍可查看事实数据。")
+            };
+            (
+                tape_r.unwrap_or_else(|e| map_err("tape", e)),
+                short_r.unwrap_or_else(|e| map_err("short_term", e)),
+                fund_r.unwrap_or_else(|e| map_err("fundamentals", e)),
+                stmt_r.unwrap_or_else(|e| map_err("statements", e)),
+                Some(ai.model_name().to_string()),
+                true,
+            )
         };
 
-    if analysis.is_empty() {
+    if analysis.trim().is_empty() {
         analysis = "暂无盘面解读。".into();
     }
-    if short_analysis.is_empty() {
+    if short_analysis.trim().is_empty() {
         short_analysis = "暂无短线解读。".into();
     }
-    if fund_analysis.is_empty() {
+    if fund_analysis.trim().is_empty() {
         fund_analysis = "暂无基本面解读。".into();
     }
-    if stmt_analysis.is_empty() {
+    if stmt_analysis.trim().is_empty() {
         stmt_analysis = "暂无财报解读。".into();
     }
 
@@ -741,58 +771,3 @@ fn build_short_term(all_bars: &[StockAnalyzeBar]) -> ShortTermDim {
     }
 }
 
-#[derive(Debug, Default)]
-struct DimAnalyses {
-    tape: String,
-    short_term: String,
-    fundamentals: String,
-    statements: String,
-}
-
-fn parse_dim_analyses(raw: &str) -> DimAnalyses {
-    let trimmed = raw.trim();
-    let json_str = extract_json_object(trimmed).unwrap_or_else(|| trimmed.to_string());
-    if let Ok(v) = serde_json::from_str::<Value>(&json_str) {
-        return DimAnalyses {
-            tape: v
-                .get("tape")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .trim()
-                .to_string(),
-            short_term: v
-                .get("short_term")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .trim()
-                .to_string(),
-            fundamentals: v
-                .get("fundamentals")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .trim()
-                .to_string(),
-            statements: v
-                .get("statements")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .trim()
-                .to_string(),
-        };
-    }
-    // 解析失败：整段当作盘面
-    DimAnalyses {
-        tape: trimmed.to_string(),
-        ..DimAnalyses::default()
-    }
-}
-
-fn extract_json_object(s: &str) -> Option<String> {
-    let start = s.find('{')?;
-    let end = s.rfind('}')?;
-    if end > start {
-        Some(s[start..=end].to_string())
-    } else {
-        None
-    }
-}
