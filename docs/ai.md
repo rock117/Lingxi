@@ -57,6 +57,7 @@ backend/src/ai/
 backend/src/market/
   stock_analyze.rs   近5日K + 成交明细 + AI
   eastmoney.rs       东财 details/get
+  tencent.rs         腾讯当日分笔（东财失败回退）
 ```
 
 启动时：`AiClient::from_config(&cfg)` → `rocket.manage(ai)`；`EastmoneyClient` 同样 manage。
@@ -83,21 +84,21 @@ backend/src/market/
 | 字段 | 说明 |
 |---|---|
 | `trade_date` | 成交明细所用交易日（非开市日则为最近开市日） |
-| `detail_source` | `live` = 东财拉取并写入库；`db` = 拉取失败后用库内快照 |
+| `detail_source` | `eastmoney` / `tencent` = 实时拉取（不入库）；`db` = 库内快照 |
 | `detail_last_time` | 明细最新一笔时间，如 `2026-10-24 14:59:57`；无则 null |
 | `detail_tick_count` | 笔数 |
-| `detail_updated_at` | 库写入/快照时间 |
+| `detail_updated_at` | 仅 `db` 时有库快照时间 |
 | `bars` | 近约 5 个交易日日 K |
 | `analysis` | AI 正文；未启用或失败时为说明文案 |
 | `ai_enabled` / `ai_model` | 是否启用及模型名 |
 
 ### 4.2 成交明细
 
-- 数据源：东财 `push2.eastmoney.com` **details/get**（见 SecuritiesCollector `eastmoney-apis.md` §1.4）；`pos=-50000` 尽量拉全天。  
-- 每行：`时间,价格,手数,方向(1买/2卖/4中性),笔序`；入库 `detail` 为同格式字符串 JSON 数组。  
+- 数据源顺序：**东财** `details/get`（`pos` 随机 ∈ `[-13787,-5031]`，UA 轮换）→ 失败则 **腾讯** `stock.gtimg.cn` 当日翻页（见 `free-tick-apis.md` §2）→ 再失败读库（只读，本接口不再写入）。  
+- 腾讯仅沪深当日；北交所无腾讯回退。腾讯行归一为东财格式后仅用于本次分析。  
+- 每行：`时间,价格,手数,方向(1买/2卖/4中性),笔序`。  
+- `detail_source`：`eastmoney` / `tencent` / `db`。  
 - 交易日：`sc_trade_calendar` 中 `is_open` 且 `≤` 上海今日的最近一日。  
-- 拉取成功：upsert `sc_stock_trade_detail`（PK `(symbol, trade_date)`，`detail` JSONB 字符串数组）。  
-- 拉取失败或为空：读该日库数据；再无则读该票最近一日明细。  
 - 送给 AI 的是**摘要**（买卖手数、VWAP、高低、大单、尾盘样本），不是全量 tick。
 
 ### 4.3 App

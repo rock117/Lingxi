@@ -2,6 +2,8 @@
 //! 文档：SecuritiesCollector `docs/datasources/eastmoney-apis.md` §1.4。
 
 use anyhow::{anyhow, Context, Result};
+use rand::seq::SliceRandom;
+use rand::Rng;
 use reqwest::Client;
 use serde::Deserialize;
 use std::time::Duration;
@@ -12,8 +14,24 @@ use super::rate_limit::RateLimiter;
 const DETAILS_URL: &str = "https://push2.eastmoney.com/api/qt/stock/details/get";
 const FIELDS1: &str = "f1,f2,f3,f4";
 const FIELDS2: &str = "f51,f52,f53,f54,f55";
+/// `pos` 随机区间（负数，绝对值越大笔数越多）：`[-13787, -5031]`。
+const POS_MIN: i32 = -13787;
+const POS_MAX: i32 = -5031;
 /// 日志里正文截断长度（字符）。
 const LOG_BODY_CHARS: usize = 4000;
+
+/// 常见桌面/移动 UA，每次请求随机选一个。
+const USER_AGENTS: &[&str] = &[
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+];
 
 #[derive(Clone)]
 pub struct EastmoneyClient {
@@ -33,14 +51,10 @@ struct DetailsData {
 }
 
 impl EastmoneyClient {
-    /// 成交明细建议 ≤30 次/分钟。
+    /// 成交明细建议 ≤30 次/分钟。UA 按请求随机，不在 Client 上写死。
     pub fn new() -> Result<Self> {
         let http = Client::builder()
             .timeout(Duration::from_secs(30))
-            .user_agent(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
-                 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            )
             .build()
             .context("创建 Eastmoney HTTP 客户端失败")?;
         Ok(Self {
@@ -49,11 +63,13 @@ impl EastmoneyClient {
         })
     }
 
-    /// `pos` 为负数表示最近 N 笔（如 `-50000` 尽量覆盖全天）。
+    /// 拉取成交明细。`pos` 在 `[-13787, -5031]` 内随机；UA 每次随机。
     /// 返回 `data.details` 原始行：`时间,价格,手数,方向(1买/2卖/4中性),笔序`。
-    pub async fn fetch_trade_details(&self, secid: &str, pos: i32) -> Result<Vec<String>> {
+    pub async fn fetch_trade_details(&self, secid: &str) -> Result<Vec<String>> {
         self.limiter.acquire().await;
+        let pos = random_detail_pos();
         let pos_s = pos.to_string();
+        let ua = random_user_agent();
         let request_url = format!(
             "{DETAILS_URL}?secid={secid}&fields1={FIELDS1}&fields2={FIELDS2}&pos={pos_s}"
         );
@@ -62,6 +78,7 @@ impl EastmoneyClient {
             target: "eastmoney_details",
             %secid,
             pos,
+            user_agent = %ua,
             fields1 = FIELDS1,
             fields2 = FIELDS2,
             %request_url,
@@ -71,7 +88,10 @@ impl EastmoneyClient {
         let http_resp = match self
             .http
             .get(DETAILS_URL)
+            .header("User-Agent", ua)
             .header("Referer", "https://quote.eastmoney.com/")
+            .header("Accept", "*/*")
+            .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
             .query(&[
                 ("secid", secid),
                 ("fields1", FIELDS1),
@@ -87,6 +107,7 @@ impl EastmoneyClient {
                     target: "eastmoney_details",
                     %secid,
                     pos,
+                    user_agent = %ua,
                     %request_url,
                     error = %e,
                     error_debug = ?e,
@@ -188,6 +209,7 @@ impl EastmoneyClient {
             target: "eastmoney_details",
             %secid,
             pos,
+            user_agent = %ua,
             %request_url,
             http_status = status_u,
             body_chars,
@@ -199,6 +221,17 @@ impl EastmoneyClient {
 
         Ok(details)
     }
+}
+
+fn random_detail_pos() -> i32 {
+    rand::thread_rng().gen_range(POS_MIN..=POS_MAX)
+}
+
+fn random_user_agent() -> &'static str {
+    USER_AGENTS
+        .choose(&mut rand::thread_rng())
+        .copied()
+        .unwrap_or(USER_AGENTS[0])
 }
 
 /// `600519.SH` → `1.600519`；深/北 → `0.`。
@@ -238,5 +271,13 @@ mod tests {
         assert_eq!(symbol_to_secid("300750.SZ").as_deref(), Some("0.300750"));
         assert_eq!(symbol_to_secid("430047.BJ").as_deref(), Some("0.430047"));
         assert_eq!(symbol_to_secid("920001.BJ").as_deref(), Some("0.920001"));
+    }
+
+    #[test]
+    fn pos_in_range() {
+        for _ in 0..50 {
+            let p = random_detail_pos();
+            assert!((POS_MIN..=POS_MAX).contains(&p), "pos={p}");
+        }
     }
 }

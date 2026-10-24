@@ -141,7 +141,9 @@ fun StockAnalyzeScreen(
                                 KvAnalyze(
                                     "来源",
                                     when (r.detailSource) {
-                                        "live" -> "实时（已写入库）"
+                                        "eastmoney" -> "东财实时"
+                                        "tencent" -> "腾讯实时"
+                                        "live" -> "实时"
                                         "db" -> "数据库快照"
                                         else -> r.detailSource.ifBlank { "—" }
                                     },

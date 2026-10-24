@@ -11,6 +11,7 @@ pub mod calculator;
 pub mod data_source;
 pub mod domain;
 pub mod eastmoney;
+pub mod tencent;
 pub mod fund_stats;
 pub mod fundamentals;
 pub mod stock_analyze;

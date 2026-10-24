@@ -84,6 +84,8 @@ async fn rocket() -> _ {
     let miana = market::miana::MianaClient::new(&cfg).expect("初始化 Miana 客户端失败");
     let eastmoney =
         market::eastmoney::EastmoneyClient::new().expect("初始化东财客户端失败");
+    let tencent =
+        market::tencent::TencentClient::new().expect("初始化腾讯财经客户端失败");
     let realtime_cache =
         market::realtime_cache::RealtimeDayCache::new(cfg.miana_realtime_cache_secs);
 
@@ -136,6 +138,7 @@ async fn rocket() -> _ {
         .manage(ai)
         .manage(miana)
         .manage(eastmoney)
+        .manage(tencent)
         .manage(realtime_cache)
         .manage(hub)
         .attach(request_id::RequestIdFairing)

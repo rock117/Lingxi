@@ -1,9 +1,7 @@
 //! 个股 AI 分析：近 5 日 K 线 + 当日（或最近交易日）成交明细。
 
-use chrono::{NaiveDate, Utc};
-use sea_orm::{
-    ConnectionTrait, DatabaseBackend, DatabaseConnection, DbErr, FromQueryResult, Statement,
-};
+use chrono::NaiveDate;
+use sea_orm::{DatabaseBackend, DatabaseConnection, DbErr, FromQueryResult, Statement};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tracing::{info, warn};
@@ -11,10 +9,8 @@ use tracing::{info, warn};
 use super::data_source;
 use super::eastmoney::{self, EastmoneyClient};
 use super::session;
+use super::tencent::{self, TencentClient};
 use crate::ai::AiClient;
-
-/// 东财单次拉取最近笔数（负数）；`-50000` 尽量覆盖全天 Level-1 明细。
-const DETAIL_POS: i32 = -50000;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StockAnalyzeBar {
@@ -33,7 +29,7 @@ pub struct StockAnalyzeOut {
     pub name: String,
     /// 成交明细所用交易日（非开市日则为最近开市日）
     pub trade_date: String,
-    /// `live` = 东财拉取并已写入库；`db` = 拉取失败后用库内快照
+    /// `eastmoney` / `tencent` = 实时拉取（不入库）；`db` = 库内快照
     pub detail_source: String,
     /// 明细最新一笔时间，如 `2026-10-24 14:59:57`；无则 null
     pub detail_last_time: Option<String>,
@@ -76,30 +72,6 @@ LIMIT 1
     .one(db)
     .await?;
     Ok(row.map(|r| r.trade_date).unwrap_or(as_of))
-}
-
-async fn upsert_trade_detail(
-    db: &DatabaseConnection,
-    symbol: &str,
-    trade_date: NaiveDate,
-    details: &[String],
-) -> Result<(), DbErr> {
-    let detail_json = Value::Array(details.iter().cloned().map(Value::String).collect());
-    let detail_str = serde_json::to_string(&detail_json).unwrap_or_else(|_| "[]".into());
-    let sql = r#"
-INSERT INTO sc_stock_trade_detail (symbol, trade_date, detail, updated_at)
-VALUES ($1, $2, $3::jsonb, NOW())
-ON CONFLICT (symbol, trade_date) DO UPDATE SET
-    detail = EXCLUDED.detail,
-    updated_at = NOW()
-"#;
-    db.execute_raw(Statement::from_sql_and_values(
-        DatabaseBackend::Postgres,
-        sql,
-        [symbol.into(), trade_date.into(), detail_str.into()],
-    ))
-    .await?;
-    Ok(())
 }
 
 async fn load_trade_detail(
@@ -270,6 +242,7 @@ fn summarize_details(details: &[String]) -> DetailSummary {
 pub async fn analyze_stock(
     db: &DatabaseConnection,
     eastmoney: &EastmoneyClient,
+    tencent: &TencentClient,
     ai: &AiClient,
     symbol: &str,
 ) -> anyhow::Result<StockAnalyzeOut> {
@@ -286,20 +259,17 @@ pub async fn analyze_stock(
     let mut detail_updated_at: Option<String> = None;
     let mut used_trade_date = trade_date;
 
+    // 1) 东财 → 2) 腾讯（仅当日沪深）→ 3) 库
+    let mut live_ok = false;
     if let Some(secid) = eastmoney::symbol_to_secid(symbol) {
-        match eastmoney.fetch_trade_details(&secid, DETAIL_POS).await {
+        match eastmoney.fetch_trade_details(&secid).await {
             Ok(rows) if !rows.is_empty() => {
-                if let Err(e) = upsert_trade_detail(db, symbol, trade_date, &rows).await {
-                    warn!(error = %e, %symbol, "写入 sc_stock_trade_detail 失败");
-                } else {
-                    info!(%symbol, %trade_date_s, n = rows.len(), "成交明细已写入库");
-                }
                 details = rows;
-                detail_source = "live".into();
-                detail_updated_at = Some(Utc::now().to_rfc3339());
+                detail_source = "eastmoney".into();
+                live_ok = true;
             }
             Ok(_) => {
-                warn!(%symbol, secid, "东财成交明细为空，尝试读库");
+                warn!(%symbol, secid, "东财成交明细为空，尝试腾讯");
             }
             Err(e) => {
                 warn!(
@@ -307,32 +277,64 @@ pub async fn analyze_stock(
                     secid,
                     error = %e,
                     error_debug = ?e,
-                    "东财成交明细拉取失败，尝试读库"
+                    "东财成交明细拉取失败，尝试腾讯"
                 );
             }
         }
     } else {
-        warn!(%symbol, "无法映射东财 secid");
+        warn!(%symbol, "无法映射东财 secid，尝试腾讯");
     }
 
-    if details.is_empty() {
-        if let Some(row) = load_trade_detail(db, symbol, trade_date).await? {
-            details = details_from_json(&row.detail);
-            used_trade_date = row.trade_date;
-            detail_updated_at = Some(row.updated_at);
-            detail_source = "db".into();
-        } else if let Some(row) = load_latest_trade_detail(db, symbol).await? {
-            details = details_from_json(&row.detail);
-            used_trade_date = row.trade_date;
-            detail_updated_at = Some(row.updated_at);
-            detail_source = "db".into();
-            warn!(
-                %symbol,
-                wanted = %trade_date_s,
-                got = %row.trade_date,
-                "指定交易日无明细，改用库内最近一日"
-            );
+    if !live_ok {
+        if let Some(tc) = tencent::symbol_to_tencent_code(symbol) {
+            match tencent.fetch_trade_details_today(&tc).await {
+                Ok(rows) if !rows.is_empty() => {
+                    details = rows;
+                    detail_source = "tencent".into();
+                    live_ok = true;
+                }
+                Ok(_) => {
+                    warn!(%symbol, tencent_code = %tc, "腾讯成交明细为空，尝试读库");
+                }
+                Err(e) => {
+                    warn!(
+                        %symbol,
+                        tencent_code = %tc,
+                        error = %e,
+                        error_debug = ?e,
+                        "腾讯成交明细拉取失败，尝试读库"
+                    );
+                }
+            }
+        } else {
+            warn!(%symbol, "无法映射腾讯代码（北交所等不支持），尝试读库");
         }
+    }
+
+    if live_ok {
+        info!(
+            %symbol,
+            %trade_date_s,
+            n = details.len(),
+            source = %detail_source,
+            "成交明细实时拉取成功（不入库）"
+        );
+    } else if let Some(row) = load_trade_detail(db, symbol, trade_date).await? {
+        details = details_from_json(&row.detail);
+        used_trade_date = row.trade_date;
+        detail_updated_at = Some(row.updated_at);
+        detail_source = "db".into();
+    } else if let Some(row) = load_latest_trade_detail(db, symbol).await? {
+        details = details_from_json(&row.detail);
+        used_trade_date = row.trade_date;
+        detail_updated_at = Some(row.updated_at);
+        detail_source = "db".into();
+        warn!(
+            %symbol,
+            wanted = %trade_date_s,
+            got = %row.trade_date,
+            "指定交易日无明细，改用库内最近一日"
+        );
     }
 
     let bars_raw = data_source::load_stock_recent_klines(db, symbol, 5).await?;

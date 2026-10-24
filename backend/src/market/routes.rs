@@ -30,6 +30,7 @@ use super::fundamentals;
 use super::screen::{self, ScreenExpression, ScreenResult, StrategyDef};
 use super::session;
 use super::stock_analyze::{self as stock_analyze_svc, StockAnalyzeOut};
+use super::tencent::TencentClient;
 
 /// MTT 需要至少 MA60 + 斜率回看，默认取最近 70 个交易日。
 const MTT_LOOKBACK_DAYS: usize = 70;
@@ -277,12 +278,19 @@ pub struct StockDetailOut {
 pub async fn stock_analyze_query(
     db: &rocket::State<DatabaseConnection>,
     eastmoney: &rocket::State<EastmoneyClient>,
+    tencent: &rocket::State<TencentClient>,
     ai: &rocket::State<AiClient>,
     symbol: &str,
 ) -> AppResult<Json<StockAnalyzeOut>> {
-    let out = stock_analyze_svc::analyze_stock(db.inner(), eastmoney.inner(), ai.inner(), symbol)
-        .await
-        .map_err(AppError::Internal)?;
+    let out = stock_analyze_svc::analyze_stock(
+        db.inner(),
+        eastmoney.inner(),
+        tencent.inner(),
+        ai.inner(),
+        symbol,
+    )
+    .await
+    .map_err(AppError::Internal)?;
     Ok(Json(out))
 }
 
