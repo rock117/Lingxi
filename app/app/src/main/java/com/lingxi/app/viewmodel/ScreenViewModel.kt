@@ -8,6 +8,7 @@ import com.lingxi.app.data.model.Condition
 import com.lingxi.app.data.model.CreateConditionRequest
 import com.lingxi.app.data.model.ScreenRequest
 import com.lingxi.app.data.model.ScreenResult
+import com.lingxi.app.data.model.StockAnalyze
 import com.lingxi.app.data.model.StockDetail
 import com.lingxi.app.data.model.StrategyDef
 import com.lingxi.app.data.model.UpdateConditionRequest
@@ -59,6 +60,15 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
     private val _stockError = MutableStateFlow<String?>(null)
     val stockError: StateFlow<String?> = _stockError.asStateFlow()
 
+    private val _stockAnalyze = MutableStateFlow<StockAnalyze?>(null)
+    val stockAnalyze: StateFlow<StockAnalyze?> = _stockAnalyze.asStateFlow()
+
+    private val _stockAnalyzeLoading = MutableStateFlow(false)
+    val stockAnalyzeLoading: StateFlow<Boolean> = _stockAnalyzeLoading.asStateFlow()
+
+    private val _stockAnalyzeError = MutableStateFlow<String?>(null)
+    val stockAnalyzeError: StateFlow<String?> = _stockAnalyzeError.asStateFlow()
+
     init {
         refresh()
     }
@@ -66,6 +76,11 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
     fun clearStockDetail() {
         _stockDetail.value = null
         _stockError.value = null
+    }
+
+    fun clearStockAnalyze() {
+        _stockAnalyze.value = null
+        _stockAnalyzeError.value = null
     }
 
     fun loadStockDetail(symbol: String) {
@@ -80,6 +95,21 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
                 _stockError.value = it.message ?: "加载失败"
             }
             _stockLoading.value = false
+        }
+    }
+
+    fun loadStockAnalyze(symbol: String) {
+        viewModelScope.launch {
+            _stockAnalyzeLoading.value = true
+            _stockAnalyzeError.value = null
+            _stockAnalyze.value = null
+            runCatching {
+                val api = ApiClient.create(prefs.configFlow.first())
+                _stockAnalyze.value = api.stockAnalyze(symbol)
+            }.onFailure {
+                _stockAnalyzeError.value = it.message ?: "分析失败"
+            }
+            _stockAnalyzeLoading.value = false
         }
     }
 

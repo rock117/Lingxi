@@ -18,6 +18,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.lingxi.app.condition.ScreenComposeScreen
 import com.lingxi.app.condition.ScreenResultScreen
+import com.lingxi.app.condition.StockAnalyzeScreen
 import com.lingxi.app.condition.StockDetailScreen
 import com.lingxi.app.home.HomeScreen
 import com.lingxi.app.navigation.Routes
@@ -183,6 +184,25 @@ private fun LingxiNav(
                 symbol = symbol,
                 onBack = {
                     screenViewModel.clearStockDetail()
+                    navController.popBackStack()
+                },
+                onAnalyze = { sym ->
+                    screenViewModel.clearStockAnalyze()
+                    navController.navigate(Routes.stockAnalyze(sym))
+                },
+            )
+        }
+        composable(
+            route = Routes.STOCK_ANALYZE,
+            arguments = listOf(navArgument("symbol") { type = NavType.StringType }),
+        ) { entry ->
+            val encoded = entry.arguments?.getString("symbol").orEmpty()
+            val symbol = Routes.decodeStockSymbol(encoded)
+            StockAnalyzeScreen(
+                viewModel = screenViewModel,
+                symbol = symbol,
+                onBack = {
+                    screenViewModel.clearStockAnalyze()
                     navController.popBackStack()
                 },
             )

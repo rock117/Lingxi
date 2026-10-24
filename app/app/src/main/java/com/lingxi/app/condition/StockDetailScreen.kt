@@ -20,6 +20,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Button
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -41,6 +42,7 @@ fun StockDetailScreen(
     viewModel: ScreenViewModel,
     symbol: String,
     onBack: () -> Unit,
+    onAnalyze: (String) -> Unit = {},
 ) {
     val detail by viewModel.stockDetail.collectAsStateWithLifecycle()
     val loading by viewModel.stockLoading.collectAsStateWithLifecycle()
@@ -120,6 +122,13 @@ fun StockDetailScreen(
                             color = QuoteColors.of(d.changePct),
                             fontWeight = FontWeight.SemiBold,
                         )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = { onAnalyze(d.symbol.ifBlank { symbol }) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("AI 分析个股")
+                        }
                     }
                     item {
                         Card(modifier = Modifier.fillMaxWidth()) {

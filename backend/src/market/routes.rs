@@ -23,10 +23,13 @@ use super::mid_term;
 use super::miana::MianaClient;
 use super::realtime_cache::RealtimeDayCache;
 use super::result_cache;
+use crate::ai::AiClient;
+use super::eastmoney::EastmoneyClient;
 use super::fund_stats::{self as fund_stats_svc, FundStatsMeta, FundStatsResult};
 use super::fundamentals;
 use super::screen::{self, ScreenExpression, ScreenResult, StrategyDef};
 use super::session;
+use super::stock_analyze::{self as stock_analyze_svc, StockAnalyzeOut};
 
 /// MTT 需要至少 MA60 + 斜率回看，默认取最近 70 个交易日。
 const MTT_LOOKBACK_DAYS: usize = 70;
@@ -267,6 +270,20 @@ pub struct StockDetailOut {
     /// 近 10 个交易日收盘相对 10 日前收盘涨跌幅 %
     pub change_10d_pct: Option<f64>,
     pub bars: Vec<StockBarOut>,
+}
+
+/// `GET /api/market/stock/analyze?symbol=600519.SH` — 近5日K线 + 成交明细 + AI 分析。
+#[get("/api/market/stock/analyze?<symbol>")]
+pub async fn stock_analyze_query(
+    db: &rocket::State<DatabaseConnection>,
+    eastmoney: &rocket::State<EastmoneyClient>,
+    ai: &rocket::State<AiClient>,
+    symbol: &str,
+) -> AppResult<Json<StockAnalyzeOut>> {
+    let out = stock_analyze_svc::analyze_stock(db.inner(), eastmoney.inner(), ai.inner(), symbol)
+        .await
+        .map_err(AppError::Internal)?;
+    Ok(Json(out))
 }
 
 /// `GET /api/market/stock?symbol=000001.SZ` — 个股近期日 K 与涨跌摘要。

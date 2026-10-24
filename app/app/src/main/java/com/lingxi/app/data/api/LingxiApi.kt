@@ -10,6 +10,7 @@ import com.lingxi.app.data.model.MttResult
 import com.lingxi.app.data.model.NotificationItem
 import com.lingxi.app.data.model.ScreenRequest
 import com.lingxi.app.data.model.ScreenResult
+import com.lingxi.app.data.model.StockAnalyze
 import com.lingxi.app.data.model.StockDetail
 import com.lingxi.app.data.model.StrategyDef
 import com.lingxi.app.data.model.UpdateConditionRequest
@@ -70,6 +71,9 @@ interface LingxiApi {
 
     @GET("api/market/stock")
     suspend fun stockDetail(@Query("symbol") symbol: String): StockDetail
+
+    @GET("api/market/stock/analyze")
+    suspend fun stockAnalyze(@Query("symbol") symbol: String): StockAnalyze
 
     @GET("api/market/fund-stats/meta")
     suspend fun fundStatsMeta(): FundStatsMeta

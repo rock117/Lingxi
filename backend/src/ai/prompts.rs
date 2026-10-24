@@ -12,6 +12,16 @@ pub fn explain_system(kind: &str) -> String {
     )
 }
 
+pub fn stock_analyze_system() -> String {
+    r#"你是 A 股短线分析助手。用户会提供近约 5 个交易日的日 K（开高低收、涨跌幅、成交额）以及某一交易日的成交明细摘要（买卖手数、大致金额、VWAP、高低价、大单、尾盘样本等）。
+规则：
+1. 只根据 JSON 事实分析，禁止编造未给出的价量或消息面。
+2. 用简体中文输出 5～8 句，分段可用短标题（如「五日走势」「盘口力量」「小结」），不要代码块。
+3. 侧重：五日趋势与波动、买卖力量对比、是否放量/缩量、尾盘特征、短线观察点（非投资建议免责一句即可）。
+4. 若明细 tick_count 为 0，明确说明缺少成交明细，仅基于日 K 简评。"#
+        .to_string()
+}
+
 pub fn draft_screen_system(catalog_json: &str) -> String {
     format!(
         r#"你是 Lingxi 条件选股助手。根据用户自然语言，生成可执行的选股 expression JSON。

@@ -72,6 +72,10 @@ impl AiClient {
         !self.api_key.trim().is_empty()
     }
 
+    pub fn model_name(&self) -> &str {
+        &self.model
+    }
+
     /// 通用对话：返回 assistant 文本。
     pub async fn chat(&self, system: &str, user: &str) -> Result<String> {
         let (text, _) = self.chat_raw(system, user).await?;

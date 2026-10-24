@@ -80,3 +80,21 @@ data class StockDetail(
     @SerialName("change_10d_pct") val change10dPct: Double? = null,
     val bars: List<StockBar> = emptyList(),
 )
+
+/** `GET /api/market/stock/analyze` */
+@Serializable
+data class StockAnalyze(
+    val symbol: String = "",
+    val name: String = "",
+    @SerialName("trade_date") val tradeDate: String = "",
+    /** `live` = 东财拉取并入库；`db` = 库内快照 */
+    @SerialName("detail_source") val detailSource: String = "",
+    /** 明细最新一笔时间，如 `2026-10-24 14:59:57` */
+    @SerialName("detail_last_time") val detailLastTime: String? = null,
+    @SerialName("detail_tick_count") val detailTickCount: Long = 0,
+    @SerialName("detail_updated_at") val detailUpdatedAt: String? = null,
+    val bars: List<StockBar> = emptyList(),
+    val analysis: String = "",
+    @SerialName("ai_enabled") val aiEnabled: Boolean = false,
+    @SerialName("ai_model") val aiModel: String? = null,
+)

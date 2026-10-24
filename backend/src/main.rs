@@ -82,6 +82,8 @@ async fn rocket() -> _ {
     }
 
     let miana = market::miana::MianaClient::new(&cfg).expect("初始化 Miana 客户端失败");
+    let eastmoney =
+        market::eastmoney::EastmoneyClient::new().expect("初始化东财客户端失败");
     let realtime_cache =
         market::realtime_cache::RealtimeDayCache::new(cfg.miana_realtime_cache_secs);
 
@@ -133,6 +135,7 @@ async fn rocket() -> _ {
         .manage(cfg)
         .manage(ai)
         .manage(miana)
+        .manage(eastmoney)
         .manage(realtime_cache)
         .manage(hub)
         .attach(request_id::RequestIdFairing)
@@ -158,6 +161,7 @@ async fn rocket() -> _ {
                 market::routes::screen_preview,
                 market::routes::screen_by_condition,
                 market::routes::stock_detail,
+                market::routes::stock_analyze_query,
                 market::routes::fund_stats_meta,
                 market::routes::fund_stats_query,
                 ws::ws_handler,

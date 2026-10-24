@@ -5,8 +5,7 @@
 
 #[allow(dead_code)]
 mod client;
-#[allow(dead_code)]
-mod prompts;
+pub mod prompts;
 
 #[allow(unused_imports)] // 供其它 crate 模块 `use crate::ai::…`
 pub use client::{AiClient, ExplainResult, ScreenDraft};

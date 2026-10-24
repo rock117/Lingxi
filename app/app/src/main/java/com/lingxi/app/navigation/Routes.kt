@@ -9,6 +9,7 @@ object Routes {
     const val SCREEN_EDIT = "screen/edit/{id}"
     const val SCREEN_RESULT = "screen/result/{conditionId}"
     const val STOCK_DETAIL = "stock/detail/{symbol}"
+    const val STOCK_ANALYZE = "stock/analyze/{symbol}"
 
     fun conditionEdit(id: Long) = "condition/edit/$id"
 
@@ -27,6 +28,9 @@ object Routes {
     /** 路径中 `.` 换成 `~`，避免 Nav 路径解析问题。 */
     fun stockDetail(symbol: String): String =
         "stock/detail/${symbol.replace('.', '~')}"
+
+    fun stockAnalyze(symbol: String): String =
+        "stock/analyze/${symbol.replace('.', '~')}"
 
     fun decodeStockSymbol(encoded: String): String =
         encoded.replace('~', '.')

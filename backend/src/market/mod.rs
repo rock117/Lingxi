@@ -10,8 +10,10 @@
 pub mod calculator;
 pub mod data_source;
 pub mod domain;
+pub mod eastmoney;
 pub mod fund_stats;
 pub mod fundamentals;
+pub mod stock_analyze;
 pub mod intraday_alert;
 pub mod intraday_push;
 pub mod mid_term;
