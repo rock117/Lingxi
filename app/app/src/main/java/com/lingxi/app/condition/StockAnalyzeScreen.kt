@@ -32,15 +32,19 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,11 +60,26 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.lingxi.app.data.model.BalancePeriodRow
+import com.lingxi.app.data.model.CashflowPeriodRow
+import com.lingxi.app.data.model.FundamentalsDim
+import com.lingxi.app.data.model.IncomePeriodRow
+import com.lingxi.app.data.model.ShortTermDim
+import com.lingxi.app.data.model.StatementsDim
+import com.lingxi.app.data.model.StockAnalyze
 import com.lingxi.app.data.model.StockAnalyzeQuote
+import com.lingxi.app.data.model.StockBar
 import com.lingxi.app.data.model.StockSearchHit
 import com.lingxi.app.ui.QuoteColors
 import com.lingxi.app.viewmodel.ScreenViewModel
 import java.util.Locale
+
+private enum class AnalyzeDim(val label: String) {
+    Tape("盘面"),
+    ShortTerm("短线走势"),
+    Fundament("基本面"),
+    Statements("财务报表"),
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -81,6 +100,7 @@ fun StockAnalyzeScreen(
 
     var selectedSymbol by remember { mutableStateOf(initialSymbol.orEmpty()) }
     var selectedName by remember { mutableStateOf("") }
+    var dimTab by rememberSaveable { mutableIntStateOf(0) }
 
     LaunchedEffect(initialSymbol) {
         val sym = initialSymbol?.trim().orEmpty()
@@ -100,10 +120,12 @@ fun StockAnalyzeScreen(
         .ifBlank { result?.name.orEmpty() }
         .ifBlank { selectedSymbol.ifBlank { "AI 分析" } }
     val displaySymbol = result?.symbol?.takeIf { it.isNotBlank() } ?: selectedSymbol
+    val hasStock = selectedSymbol.isNotBlank()
 
     fun selectHit(hit: StockSearchHit) {
         selectedSymbol = hit.symbol
         selectedName = hit.name
+        dimTab = 0
         viewModel.onStockSearchQueryChange("")
         viewModel.loadStockAnalyze(hit.symbol)
     }
@@ -114,6 +136,7 @@ fun StockAnalyzeScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
+            // —— 固定顶区 ——
             StockSearchBar(
                 query = query,
                 loading = searchLoading,
@@ -121,7 +144,7 @@ fun StockAnalyzeScreen(
                 onClear = { viewModel.onStockSearchQueryChange("") },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
             )
 
             if (hits.isNotEmpty()) {
@@ -130,154 +153,110 @@ fun StockAnalyzeScreen(
                     onSelect = ::selectHit,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f, fill = false),
+                        .padding(horizontal = 16.dp)
+                        .padding(bottom = 4.dp),
                 )
             }
 
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                when {
-                    loading && result == null && selectedSymbol.isNotBlank() -> {
-                        item {
-                            // 首次加载只保留中间 spinner，避免标题旁再叠一个
-                            SelectedStockHeader(
-                                name = displayName,
-                                symbol = displaySymbol,
-                                loading = false,
-                                showRefresh = false,
-                                onRefresh = { viewModel.loadStockAnalyze(selectedSymbol) },
-                            )
-                        }
-                        item {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 40.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                            ) {
-                                CircularProgressIndicator(modifier = Modifier.size(36.dp))
-                                Spacer(modifier = Modifier.height(14.dp))
-                                Text(
-                                    "正在拉取成交明细并分析…",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
+            if (hasStock) {
+                IdentityAndQuoteHeader(
+                    name = displayName,
+                    symbol = displaySymbol,
+                    quote = result?.quote,
+                    loading = loading && result == null,
+                    showRefresh = result != null || error != null,
+                    refreshLoading = loading && result != null,
+                    onRefresh = { viewModel.loadStockAnalyze(selectedSymbol) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                )
+
+                AnalyzeDimTabs(
+                    selected = dimTab,
+                    onSelect = { dimTab = it },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            // —— Tab 内容 ——
+            when {
+                !hasStock && hits.isEmpty() -> {
+                    EmptyHint(modifier = Modifier.weight(1f))
+                }
+                hits.isNotEmpty() && !hasStock -> {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+                hasStock && loading && result == null -> {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(36.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Text(
+                            "正在拉取行情与盘面数据…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
-                    error != null && result == null && selectedSymbol.isNotBlank() -> {
-                        item {
-                            SelectedStockHeader(
-                                name = displayName,
-                                symbol = displaySymbol,
-                                loading = false,
-                                showRefresh = true,
-                                onRefresh = { viewModel.loadStockAnalyze(selectedSymbol) },
-                            )
-                        }
-                        item {
-                            Surface(
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.errorContainer,
-                            ) {
-                                Text(
-                                    error.orEmpty(),
-                                    color = MaterialTheme.colorScheme.onErrorContainer,
-                                    modifier = Modifier.padding(14.dp),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                            }
-                        }
-                    }
-                    result != null -> {
-                        val r = result!!
-                        item {
-                            SelectedStockHeader(
-                                name = r.name.ifBlank { displayName },
-                                symbol = r.symbol.ifBlank { displaySymbol },
-                                loading = loading,
-                                showRefresh = true,
-                                onRefresh = { viewModel.loadStockAnalyze(selectedSymbol) },
-                            )
-                        }
-                        r.quote?.let { q ->
-                            item { DayQuotePanel(q) }
-                        }
-                        item {
-                            MetaPanel(
-                                tradeDate = r.tradeDate,
-                                lastTime = r.detailLastTime,
-                                tickCount = r.detailTickCount,
-                                source = r.detailSource,
-                                updatedAt = r.detailUpdatedAt,
-                            )
-                        }
-                        item {
-                            AnalysisPanel(
-                                analysis = r.analysis,
-                                aiEnabled = r.aiEnabled,
-                                aiModel = r.aiModel,
-                                loading = loading,
-                            )
-                        }
-                        if (r.bars.isNotEmpty()) {
-                            item {
-                                Text(
-                                    "近5日行情",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.padding(top = 4.dp),
-                                )
-                            }
-                            item {
-                                Surface(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = MaterialTheme.colorScheme.surface,
-                                    tonalElevation = 1.dp,
-                                    shadowElevation = 0.dp,
-                                ) {
-                                    Column {
-                                        r.bars.asReversed().forEachIndexed { idx, bar ->
-                                            if (idx > 0) {
-                                                HorizontalDivider(
-                                                    color = MaterialTheme.colorScheme.outlineVariant.copy(
-                                                        alpha = 0.5f,
-                                                    ),
-                                                )
-                                            }
-                                            BarRow(barDate = bar.date, changePct = bar.changePct,
-                                                open = bar.open, high = bar.high,
-                                                low = bar.low, close = bar.close,
-                                                amount = bar.amount)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    hits.isEmpty() && query.isBlank() -> {
-                        item {
-                            EmptyHint()
-                        }
-                    }
-                    hits.isEmpty() && query.isNotBlank() && !searchLoading -> {
-                        item {
+                }
+                hasStock && error != null && result == null -> {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                    ) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.errorContainer,
+                        ) {
                             Text(
-                                "未找到匹配股票",
+                                error.orEmpty(),
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.padding(14.dp),
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(vertical = 24.dp),
                             )
                         }
                     }
                 }
+                hasStock && result != null -> {
+                    val r = result!!
+                    when (AnalyzeDim.entries[dimTab.coerceIn(0, AnalyzeDim.entries.lastIndex)]) {
+                        AnalyzeDim.Tape -> TapeTabContent(
+                            result = r,
+                            loading = loading,
+                            modifier = Modifier.weight(1f),
+                        )
+                        AnalyzeDim.ShortTerm -> ShortTermTabContent(
+                            dim = r.shortTerm,
+                            aiEnabled = r.aiEnabled,
+                            aiModel = r.aiModel,
+                            loading = loading,
+                            modifier = Modifier.weight(1f),
+                        )
+                        AnalyzeDim.Fundament -> FundamentalsTabContent(
+                            dim = r.fundamentals,
+                            aiEnabled = r.aiEnabled,
+                            aiModel = r.aiModel,
+                            loading = loading,
+                            modifier = Modifier.weight(1f),
+                        )
+                        AnalyzeDim.Statements -> StatementsTabContent(
+                            dim = r.statements,
+                            aiEnabled = r.aiEnabled,
+                            aiModel = r.aiModel,
+                            loading = loading,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+                else -> Spacer(modifier = Modifier.weight(1f))
             }
         }
     }
@@ -324,6 +303,475 @@ fun StockAnalyzeScreen(
             body(padding)
         }
     }
+}
+
+@Composable
+private fun AnalyzeDimTabs(
+    selected: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    ScrollableTabRow(
+        selectedTabIndex = selected,
+        modifier = modifier,
+        edgePadding = 12.dp,
+        containerColor = MaterialTheme.colorScheme.background,
+        divider = {
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+            )
+        },
+    ) {
+        AnalyzeDim.entries.forEachIndexed { index, dim ->
+            Tab(
+                selected = selected == index,
+                onClick = { onSelect(index) },
+                text = {
+                    Text(
+                        dim.label,
+                        fontWeight = if (selected == index) FontWeight.SemiBold else FontWeight.Normal,
+                    )
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun IdentityAndQuoteHeader(
+    name: String,
+    symbol: String,
+    quote: StockAnalyzeQuote?,
+    loading: Boolean,
+    showRefresh: Boolean,
+    refreshLoading: Boolean,
+    onRefresh: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    name.ifBlank { "—" },
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (symbol.isNotBlank()) {
+                    Text(
+                        symbol,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (showRefresh) {
+                IconButton(onClick = onRefresh, enabled = !refreshLoading && symbol.isNotBlank()) {
+                    if (refreshLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.Refresh, contentDescription = "刷新")
+                    }
+                }
+            }
+        }
+
+        if (quote != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            DayQuotePanel(quote)
+        } else if (loading) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                "行情加载中…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TapeTabContent(
+    result: StockAnalyze,
+    loading: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    LazyColumn(
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            MetaPanel(
+                tradeDate = result.tradeDate,
+                lastTime = result.detailLastTime,
+                tickCount = result.detailTickCount,
+                source = result.detailSource,
+                updatedAt = result.detailUpdatedAt,
+            )
+        }
+        item {
+            AnalysisPanel(
+                analysis = result.analysis,
+                aiEnabled = result.aiEnabled,
+                aiModel = result.aiModel,
+                loading = loading,
+            )
+        }
+        if (result.bars.isNotEmpty()) {
+            item {
+                Text(
+                    "近5日行情",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 1.dp,
+                ) {
+                    Column {
+                        result.bars.asReversed().forEachIndexed { idx, bar ->
+                            if (idx > 0) {
+                                HorizontalDivider(
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                )
+                            }
+                            BarRow(bar)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShortTermTabContent(
+    dim: ShortTermDim,
+    aiEnabled: Boolean,
+    aiModel: String?,
+    loading: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    LazyColumn(
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 1.dp,
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        "短线指标",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    QuoteGrid(
+                        listOf(
+                            "5日涨跌" to formatOptPct(dim.change5dPct),
+                            "10日涨跌" to formatOptPct(dim.change10dPct),
+                            "20日涨跌" to formatOptPct(dim.change20dPct),
+                            "MA5" to formatOptPrice(dim.ma5),
+                            "MA10" to formatOptPrice(dim.ma10),
+                            "MA20" to formatOptPrice(dim.ma20),
+                            "额/5日均" to (dim.amountVs5dAvg?.let {
+                                String.format(Locale.US, "%.2fx", it)
+                            } ?: "—"),
+                        ),
+                    )
+                }
+            }
+        }
+        item {
+            AnalysisPanel(
+                title = "短线 AI",
+                analysis = dim.analysis,
+                aiEnabled = aiEnabled,
+                aiModel = aiModel,
+                loading = loading,
+            )
+        }
+        if (dim.bars.isNotEmpty()) {
+            item {
+                Text(
+                    "近20日行情",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 1.dp,
+                ) {
+                    Column {
+                        dim.bars.asReversed().forEachIndexed { idx, bar ->
+                            if (idx > 0) {
+                                HorizontalDivider(
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                )
+                            }
+                            BarRow(bar)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FundamentalsTabContent(
+    dim: FundamentalsDim,
+    aiEnabled: Boolean,
+    aiModel: String?,
+    loading: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    LazyColumn(
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 1.dp,
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            "基本面快照",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        val period = listOfNotNull(
+                            dim.reportDate?.takeIf { it.isNotBlank() },
+                            dim.fiscalPeriod?.takeIf { it.isNotBlank() },
+                        ).joinToString(" · ")
+                        if (period.isNotBlank()) {
+                            Text(
+                                period,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    QuoteGrid(
+                        listOf(
+                            "PE" to formatOptNum(dim.pe),
+                            "PB" to formatOptNum(dim.pb),
+                            "流通值" to formatOptYi(dim.floatMv),
+                            "总市值" to formatOptYi(dim.totalMv),
+                            "营收" to formatOptMoney(dim.revenue),
+                            "营收同比" to formatOptPct(dim.revenueYoy),
+                            "归母净利" to formatOptMoney(dim.parentNp),
+                            "净利同比" to formatOptPct(dim.parentNpYoy),
+                            "扣非净利" to formatOptMoney(dim.deductNp),
+                            "经营现金流" to formatOptMoney(dim.operatingCf),
+                            "经营同比" to formatOptPct(dim.operatingCfYoy),
+                            "应收账款" to formatOptMoney(dim.receivable),
+                            "总资产" to formatOptMoney(dim.totalAssets),
+                            "总负债" to formatOptMoney(dim.totalLiabilities),
+                            "净资产" to formatOptMoney(dim.totalEquity),
+                        ),
+                    )
+                }
+            }
+        }
+        item {
+            AnalysisPanel(
+                title = "基本面 AI",
+                analysis = dim.analysis,
+                aiEnabled = aiEnabled,
+                aiModel = aiModel,
+                loading = loading,
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatementsTabContent(
+    dim: StatementsDim,
+    aiEnabled: Boolean,
+    aiModel: String?,
+    loading: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    LazyColumn(
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            AnalysisPanel(
+                title = "财报 AI",
+                analysis = dim.analysis,
+                aiEnabled = aiEnabled,
+                aiModel = aiModel,
+                loading = loading,
+            )
+        }
+        if (dim.income.isNotEmpty()) {
+            item { SectionTitle("利润表（近几期）") }
+            item { IncomeTable(dim.income) }
+        }
+        if (dim.cashflow.isNotEmpty()) {
+            item { SectionTitle("现金流量表（近几期）") }
+            item { CashflowTable(dim.cashflow) }
+        }
+        if (dim.balance.isNotEmpty()) {
+            item { SectionTitle("资产负债表（近几期）") }
+            item { BalanceTable(dim.balance) }
+        }
+        if (dim.income.isEmpty() && dim.cashflow.isEmpty() && dim.balance.isEmpty()) {
+            item {
+                Text(
+                    "暂无财务报表数据",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(top = 4.dp),
+    )
+}
+
+@Composable
+private fun IncomeTable(rows: List<IncomePeriodRow>) {
+    StatementSurface {
+        StatementHeader(listOf("报告期", "营收", "归母", "扣非"))
+        rows.forEach { r ->
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+            StatementDataRow(
+                listOf(
+                    periodLabel(r.reportDate, r.fiscalPeriod),
+                    formatOptMoney(r.revenue),
+                    formatOptMoney(r.parentNp),
+                    formatOptMoney(r.deductNp),
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun CashflowTable(rows: List<CashflowPeriodRow>) {
+    StatementSurface {
+        StatementHeader(listOf("报告期", "经营", "投资", "筹资"))
+        rows.forEach { r ->
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+            StatementDataRow(
+                listOf(
+                    periodLabel(r.reportDate, r.fiscalPeriod),
+                    formatOptMoney(r.operating),
+                    formatOptMoney(r.investing),
+                    formatOptMoney(r.financing),
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun BalanceTable(rows: List<BalancePeriodRow>) {
+    StatementSurface {
+        StatementHeader(listOf("报告期", "总资产", "总负债", "净资产"))
+        rows.forEach { r ->
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+            StatementDataRow(
+                listOf(
+                    periodLabel(r.reportDate, r.fiscalPeriod),
+                    formatOptMoney(r.totalAssets),
+                    formatOptMoney(r.totalLiabilities),
+                    formatOptMoney(r.totalEquity),
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatementSurface(content: @Composable () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp,
+    ) {
+        Column(content = { content() })
+    }
+}
+
+@Composable
+private fun StatementHeader(cols: List<String>) {
+    Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+        cols.forEachIndexed { i, c ->
+            Text(
+                c,
+                modifier = Modifier.weight(if (i == 0) 1.2f else 1f),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatementDataRow(cols: List<String>) {
+    Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+        cols.forEachIndexed { i, c ->
+            Text(
+                c,
+                modifier = Modifier.weight(if (i == 0) 1.2f else 1f),
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = if (i == 0) FontWeight.Medium else FontWeight.Normal,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private fun periodLabel(date: String, period: String?): String {
+    val d = date.takeLast(5).ifBlank { date }
+    val p = period?.takeIf { it.isNotBlank() }
+    return if (p != null) "$d\n$p" else d
 }
 
 @Composable
@@ -411,9 +859,7 @@ private fun SearchHitList(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        modifier = modifier
-            .padding(horizontal = 16.dp)
-            .padding(bottom = 4.dp),
+        modifier = modifier,
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 2.dp,
@@ -464,46 +910,6 @@ private fun SearchHitList(
 }
 
 @Composable
-private fun SelectedStockHeader(
-    name: String,
-    symbol: String,
-    loading: Boolean,
-    showRefresh: Boolean = true,
-    onRefresh: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                name.ifBlank { "—" },
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (symbol.isNotBlank()) {
-                Text(
-                    symbol,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        if (showRefresh) {
-            IconButton(onClick = onRefresh, enabled = !loading && symbol.isNotBlank()) {
-                if (loading) {
-                    CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                } else {
-                    Icon(Icons.Default.Refresh, contentDescription = "重新分析")
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun DayQuotePanel(q: StockAnalyzeQuote) {
     val chgColor = QuoteColors.of(q.changePct)
     Surface(
@@ -512,7 +918,7 @@ private fun DayQuotePanel(q: StockAnalyzeQuote) {
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 1.dp,
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.Bottom) {
                 Text(
                     formatAnalyzePrice(q.current),
@@ -541,7 +947,7 @@ private fun DayQuotePanel(q: StockAnalyzeQuote) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             QuoteGrid(
                 listOf(
                     "开盘" to formatAnalyzePrice(q.open),
@@ -686,6 +1092,7 @@ private fun AnalysisPanel(
     aiEnabled: Boolean,
     aiModel: String?,
     loading: Boolean,
+    title: String = "盘面 AI",
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -699,7 +1106,7 @@ private fun AnalysisPanel(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "AI 分析",
+                    title,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
@@ -732,38 +1139,30 @@ private fun AnalysisPanel(
 }
 
 @Composable
-private fun BarRow(
-    barDate: String,
-    changePct: Double,
-    open: Double,
-    high: Double,
-    low: Double,
-    close: Double,
-    amount: Double,
-) {
+private fun BarRow(bar: StockBar) {
     Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                barDate,
+                bar.date,
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
             )
             Text(
-                formatAnalyzePct(changePct),
-                color = QuoteColors.of(changePct),
+                formatAnalyzePct(bar.changePct),
+                color = QuoteColors.of(bar.changePct),
                 fontWeight = FontWeight.SemiBold,
             )
         }
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            "开 ${formatAnalyzePrice(open)}  高 ${formatAnalyzePrice(high)}  " +
-                "低 ${formatAnalyzePrice(low)}  收 ${formatAnalyzePrice(close)}",
+            "开 ${formatAnalyzePrice(bar.open)}  高 ${formatAnalyzePrice(bar.high)}  " +
+                "低 ${formatAnalyzePrice(bar.low)}  收 ${formatAnalyzePrice(bar.close)}",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
-            "额 ${formatAnalyzeAmount(amount)}",
+            "额 ${formatAnalyzeAmount(bar.amount)}",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -771,9 +1170,9 @@ private fun BarRow(
 }
 
 @Composable
-private fun EmptyHint() {
+private fun EmptyHint(modifier: Modifier = Modifier) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(top = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -823,3 +1222,20 @@ private fun formatVolumeShares(shares: Double): String {
 
 private fun formatSignedAmount(v: Double): String =
     String.format(Locale.US, "%+.2f", v)
+
+private fun formatOptPct(v: Double?): String =
+    v?.let { formatAnalyzePct(it) } ?: "—"
+
+private fun formatOptPrice(v: Double?): String =
+    v?.let { formatAnalyzePrice(it) } ?: "—"
+
+private fun formatOptNum(v: Double?): String =
+    v?.let { String.format(Locale.US, "%.2f", it) } ?: "—"
+
+/** 腾讯市值字段已是「亿」 */
+private fun formatOptYi(v: Double?): String =
+    v?.let { String.format(Locale.US, "%.2f亿", it) } ?: "—"
+
+/** 财报金额（元）→ 亿/万 */
+private fun formatOptMoney(v: Double?): String =
+    v?.let { formatAnalyzeAmount(it) } ?: "—"

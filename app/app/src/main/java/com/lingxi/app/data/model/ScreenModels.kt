@@ -112,6 +112,80 @@ data class StockAnalyzeQuote(
     @SerialName("turnover_rate") val turnoverRate: Double? = null,
 )
 
+@Serializable
+data class ShortTermDim(
+    val bars: List<StockBar> = emptyList(),
+    @SerialName("change_5d_pct") val change5dPct: Double? = null,
+    @SerialName("change_10d_pct") val change10dPct: Double? = null,
+    @SerialName("change_20d_pct") val change20dPct: Double? = null,
+    val ma5: Double? = null,
+    val ma10: Double? = null,
+    val ma20: Double? = null,
+    @SerialName("amount_vs_5d_avg") val amountVs5dAvg: Double? = null,
+    val analysis: String = "",
+)
+
+@Serializable
+data class FundamentalsDim(
+    @SerialName("report_date") val reportDate: String? = null,
+    @SerialName("fiscal_period") val fiscalPeriod: String? = null,
+    val pe: Double? = null,
+    val pb: Double? = null,
+    @SerialName("float_mv") val floatMv: Double? = null,
+    @SerialName("total_mv") val totalMv: Double? = null,
+    val revenue: Double? = null,
+    @SerialName("revenue_yoy") val revenueYoy: Double? = null,
+    @SerialName("parent_np") val parentNp: Double? = null,
+    @SerialName("parent_np_yoy") val parentNpYoy: Double? = null,
+    @SerialName("deduct_np") val deductNp: Double? = null,
+    @SerialName("deduct_np_yoy") val deductNpYoy: Double? = null,
+    @SerialName("operating_cf") val operatingCf: Double? = null,
+    @SerialName("operating_cf_yoy") val operatingCfYoy: Double? = null,
+    val receivable: Double? = null,
+    @SerialName("receivable_yoy") val receivableYoy: Double? = null,
+    @SerialName("total_assets") val totalAssets: Double? = null,
+    @SerialName("total_liabilities") val totalLiabilities: Double? = null,
+    @SerialName("total_equity") val totalEquity: Double? = null,
+    val analysis: String = "",
+)
+
+@Serializable
+data class IncomePeriodRow(
+    @SerialName("report_date") val reportDate: String = "",
+    @SerialName("fiscal_period") val fiscalPeriod: String? = null,
+    val revenue: Double? = null,
+    @SerialName("parent_np") val parentNp: Double? = null,
+    @SerialName("deduct_np") val deductNp: Double? = null,
+    val rd: Double? = null,
+)
+
+@Serializable
+data class CashflowPeriodRow(
+    @SerialName("report_date") val reportDate: String = "",
+    @SerialName("fiscal_period") val fiscalPeriod: String? = null,
+    val operating: Double? = null,
+    val investing: Double? = null,
+    val financing: Double? = null,
+)
+
+@Serializable
+data class BalancePeriodRow(
+    @SerialName("report_date") val reportDate: String = "",
+    @SerialName("fiscal_period") val fiscalPeriod: String? = null,
+    @SerialName("total_assets") val totalAssets: Double? = null,
+    @SerialName("total_liabilities") val totalLiabilities: Double? = null,
+    @SerialName("total_equity") val totalEquity: Double? = null,
+    val receivable: Double? = null,
+)
+
+@Serializable
+data class StatementsDim(
+    val income: List<IncomePeriodRow> = emptyList(),
+    val cashflow: List<CashflowPeriodRow> = emptyList(),
+    val balance: List<BalancePeriodRow> = emptyList(),
+    val analysis: String = "",
+)
+
 /** `GET /api/market/stock/analyze` */
 @Serializable
 data class StockAnalyze(
@@ -127,6 +201,9 @@ data class StockAnalyze(
     val quote: StockAnalyzeQuote? = null,
     val bars: List<StockBar> = emptyList(),
     val analysis: String = "",
+    @SerialName("short_term") val shortTerm: ShortTermDim = ShortTermDim(),
+    val fundamentals: FundamentalsDim = FundamentalsDim(),
+    val statements: StatementsDim = StatementsDim(),
     @SerialName("ai_enabled") val aiEnabled: Boolean = false,
     @SerialName("ai_model") val aiModel: String? = null,
 )

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use chrono::NaiveDate;
 use sea_orm::{DatabaseBackend, DatabaseConnection, FromQueryResult, Statement};
+use serde::Serialize;
 use serde_json::Value;
 
 /// 利润表：营收 / 归母 / 扣非 / 研发费用。
@@ -306,6 +307,225 @@ fn pct_change(curr: Option<f64>, prev: Option<f64>) -> Option<f64> {
         return None;
     }
     Some((c - p) / p.abs() * 100.0)
+}
+
+/// 单票最近若干期利润表关键指标（报告期降序）。
+#[derive(Debug, Clone, Serialize)]
+pub struct IncomePeriodRow {
+    pub report_date: String,
+    pub fiscal_period: Option<String>,
+    pub revenue: Option<f64>,
+    pub parent_np: Option<f64>,
+    pub deduct_np: Option<f64>,
+    pub rd: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CashflowPeriodRow {
+    pub report_date: String,
+    pub fiscal_period: Option<String>,
+    pub operating: Option<f64>,
+    pub investing: Option<f64>,
+    pub financing: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BalancePeriodRow {
+    pub report_date: String,
+    pub fiscal_period: Option<String>,
+    pub total_assets: Option<f64>,
+    pub total_liabilities: Option<f64>,
+    pub total_equity: Option<f64>,
+    pub receivable: Option<f64>,
+}
+
+/// 单票最新一期基本面快照（含同比）。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SymbolFundSnapshot {
+    pub report_date: Option<String>,
+    pub fiscal_period: Option<String>,
+    pub revenue: Option<f64>,
+    pub revenue_yoy: Option<f64>,
+    pub parent_np: Option<f64>,
+    pub parent_np_yoy: Option<f64>,
+    pub deduct_np: Option<f64>,
+    pub deduct_np_yoy: Option<f64>,
+    pub rd: Option<f64>,
+    pub rd_yoy: Option<f64>,
+    pub operating_cf: Option<f64>,
+    pub operating_cf_yoy: Option<f64>,
+    pub receivable: Option<f64>,
+    pub receivable_yoy: Option<f64>,
+    pub total_assets: Option<f64>,
+    pub total_liabilities: Option<f64>,
+    pub total_equity: Option<f64>,
+}
+
+pub async fn load_symbol_fund_snapshot(
+    db: &DatabaseConnection,
+    symbol: &str,
+) -> Result<SymbolFundSnapshot, sea_orm::DbErr> {
+    let income = load_symbol_income_periods(db, symbol, 8).await?;
+    let cashflow = load_symbol_cashflow_periods(db, symbol, 8).await?;
+    let balance = load_symbol_balance_periods(db, symbol, 8).await?;
+
+    let mut out = SymbolFundSnapshot::default();
+    if let Some(cur) = income.first() {
+        out.report_date = Some(cur.report_date.clone());
+        out.fiscal_period = cur.fiscal_period.clone();
+        out.revenue = cur.revenue;
+        out.parent_np = cur.parent_np;
+        out.deduct_np = cur.deduct_np;
+        out.rd = cur.rd;
+        if let Some(prev) = income.get(1).filter(|p| {
+            // 优先同报告期类型；否则取上一期作粗同比
+            normalize_period(p.fiscal_period.as_deref())
+                == normalize_period(cur.fiscal_period.as_deref())
+                || income.len() >= 2
+        }) {
+            // 找真正同比：同 fiscal_period
+            let yoy = income.iter().find(|p| {
+                p.report_date != cur.report_date
+                    && normalize_period(p.fiscal_period.as_deref())
+                        == normalize_period(cur.fiscal_period.as_deref())
+            });
+            let y = yoy.unwrap_or(prev);
+            out.revenue_yoy = pct_change(cur.revenue, y.revenue);
+            out.parent_np_yoy = pct_change(cur.parent_np, y.parent_np);
+            out.deduct_np_yoy = pct_change(cur.deduct_np, y.deduct_np);
+            out.rd_yoy = pct_change(cur.rd, y.rd);
+        }
+    }
+    if let Some(cur) = cashflow.first() {
+        if out.report_date.is_none() {
+            out.report_date = Some(cur.report_date.clone());
+            out.fiscal_period = cur.fiscal_period.clone();
+        }
+        out.operating_cf = cur.operating;
+        let yoy = cashflow.iter().find(|p| {
+            p.report_date != cur.report_date
+                && normalize_period(p.fiscal_period.as_deref())
+                    == normalize_period(cur.fiscal_period.as_deref())
+        });
+        if let Some(y) = yoy.or(cashflow.get(1)) {
+            out.operating_cf_yoy = pct_change(cur.operating, y.operating);
+        }
+    }
+    if let Some(cur) = balance.first() {
+        if out.report_date.is_none() {
+            out.report_date = Some(cur.report_date.clone());
+            out.fiscal_period = cur.fiscal_period.clone();
+        }
+        out.receivable = cur.receivable;
+        out.total_assets = cur.total_assets;
+        out.total_liabilities = cur.total_liabilities;
+        out.total_equity = cur.total_equity;
+        let yoy = balance.iter().find(|p| {
+            p.report_date != cur.report_date
+                && normalize_period(p.fiscal_period.as_deref())
+                    == normalize_period(cur.fiscal_period.as_deref())
+        });
+        if let Some(y) = yoy.or(balance.get(1)) {
+            out.receivable_yoy = pct_change(cur.receivable, y.receivable);
+        }
+    }
+    Ok(out)
+}
+
+pub async fn load_symbol_income_periods(
+    db: &DatabaseConnection,
+    symbol: &str,
+    limit: u32,
+) -> Result<Vec<IncomePeriodRow>, sea_orm::DbErr> {
+    let rows = load_symbol_fund_rows(db, "sc_stock_income_statement", symbol, limit).await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let (rev, np, ded, rd) = extract_income(&r.payload);
+            IncomePeriodRow {
+                report_date: r.report_date.format("%Y-%m-%d").to_string(),
+                fiscal_period: r.fiscal_period,
+                revenue: rev,
+                parent_np: np,
+                deduct_np: ded,
+                rd,
+            }
+        })
+        .collect())
+}
+
+pub async fn load_symbol_cashflow_periods(
+    db: &DatabaseConnection,
+    symbol: &str,
+    limit: u32,
+) -> Result<Vec<CashflowPeriodRow>, sea_orm::DbErr> {
+    let rows = load_symbol_fund_rows(db, "sc_stock_cashflow_statement", symbol, limit).await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let (op, inv, fin, _) = extract_cashflow(&r.payload);
+            CashflowPeriodRow {
+                report_date: r.report_date.format("%Y-%m-%d").to_string(),
+                fiscal_period: r.fiscal_period,
+                operating: op,
+                investing: inv,
+                financing: fin,
+            }
+        })
+        .collect())
+}
+
+pub async fn load_symbol_balance_periods(
+    db: &DatabaseConnection,
+    symbol: &str,
+    limit: u32,
+) -> Result<Vec<BalancePeriodRow>, sea_orm::DbErr> {
+    let rows = load_symbol_fund_rows(db, "sc_stock_balance_sheet", symbol, limit).await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let (ar, _, _, _) = extract_balance(&r.payload);
+            BalancePeriodRow {
+                report_date: r.report_date.format("%Y-%m-%d").to_string(),
+                fiscal_period: r.fiscal_period,
+                total_assets: json_f64(&r.payload, &["totalAssets", "total_assets"]),
+                total_liabilities: json_f64(&r.payload, &["totalLiabilities", "total_liabilities"]),
+                total_equity: json_f64(&r.payload, &["totalEquity", "total_equity"])
+                    .or_else(|| {
+                        json_f64(
+                            &r.payload,
+                            &["totalShareholdersEquity", "total_shareholders_equity"],
+                        )
+                    }),
+                receivable: ar,
+            }
+        })
+        .collect())
+}
+
+async fn load_symbol_fund_rows(
+    db: &DatabaseConnection,
+    table: &str,
+    symbol: &str,
+    limit: u32,
+) -> Result<Vec<FundRow>, sea_orm::DbErr> {
+    let limit = limit.clamp(1, 16) as i64;
+    let sql = format!(
+        r#"
+SELECT symbol, report_date, fiscal_year, fiscal_period, payload
+FROM {table}
+WHERE symbol = $1
+ORDER BY report_date DESC
+LIMIT $2
+"#
+    );
+    FundRow::find_by_statement(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        sql,
+        [symbol.into(), limit.into()],
+    ))
+    .all(db)
+    .await
 }
 
 pub fn expression_needs_income(expr_rules: &[Value]) -> bool {

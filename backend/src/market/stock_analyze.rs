@@ -8,6 +8,7 @@ use tracing::{info, warn};
 
 use super::data_source;
 use super::eastmoney::{self, EastmoneyClient};
+use super::fundamentals::{self, BalancePeriodRow, CashflowPeriodRow, IncomePeriodRow};
 use super::session;
 use super::tencent::{self, TencentClient};
 use crate::ai::AiClient;
@@ -45,6 +46,53 @@ pub struct StockAnalyzeQuote {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ShortTermDim {
+    pub bars: Vec<StockAnalyzeBar>,
+    pub change_5d_pct: Option<f64>,
+    pub change_10d_pct: Option<f64>,
+    pub change_20d_pct: Option<f64>,
+    pub ma5: Option<f64>,
+    pub ma10: Option<f64>,
+    pub ma20: Option<f64>,
+    /// 最新成交额 / 近5日均额
+    pub amount_vs_5d_avg: Option<f64>,
+    pub analysis: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FundamentalsDim {
+    pub report_date: Option<String>,
+    pub fiscal_period: Option<String>,
+    pub pe: Option<f64>,
+    pub pb: Option<f64>,
+    /// 流通/总市值（亿元，腾讯口径）
+    pub float_mv: Option<f64>,
+    pub total_mv: Option<f64>,
+    pub revenue: Option<f64>,
+    pub revenue_yoy: Option<f64>,
+    pub parent_np: Option<f64>,
+    pub parent_np_yoy: Option<f64>,
+    pub deduct_np: Option<f64>,
+    pub deduct_np_yoy: Option<f64>,
+    pub operating_cf: Option<f64>,
+    pub operating_cf_yoy: Option<f64>,
+    pub receivable: Option<f64>,
+    pub receivable_yoy: Option<f64>,
+    pub total_assets: Option<f64>,
+    pub total_liabilities: Option<f64>,
+    pub total_equity: Option<f64>,
+    pub analysis: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StatementsDim {
+    pub income: Vec<IncomePeriodRow>,
+    pub cashflow: Vec<CashflowPeriodRow>,
+    pub balance: Vec<BalancePeriodRow>,
+    pub analysis: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct StockAnalyzeOut {
     pub symbol: String,
     pub name: String,
@@ -58,9 +106,13 @@ pub struct StockAnalyzeOut {
     pub detail_updated_at: Option<String>,
     /// 当日价量摘要；无 K 线时为 null
     pub quote: Option<StockAnalyzeQuote>,
+    /// 近 5 日 K（盘面 Tab）
     pub bars: Vec<StockAnalyzeBar>,
-    /// AI 分析正文；AI 未启用或失败时为错误说明
+    /// 盘面 AI；兼容旧字段
     pub analysis: String,
+    pub short_term: ShortTermDim,
+    pub fundamentals: FundamentalsDim,
+    pub statements: StatementsDim,
     pub ai_enabled: bool,
     pub ai_model: Option<String>,
 }
@@ -360,8 +412,8 @@ pub async fn analyze_stock(
         );
     }
 
-    let bars_raw = data_source::load_stock_recent_klines(db, symbol, 5).await?;
-    let bars: Vec<StockAnalyzeBar> = bars_raw
+    let bars_raw = data_source::load_stock_recent_klines(db, symbol, 30).await?;
+    let all_bars: Vec<StockAnalyzeBar> = bars_raw
         .iter()
         .map(|b| StockAnalyzeBar {
             date: b.date.clone(),
@@ -372,6 +424,15 @@ pub async fn analyze_stock(
             change_pct: b.change_pct,
             amount: b.amount,
         })
+        .collect();
+    let bars: Vec<StockAnalyzeBar> = all_bars
+        .iter()
+        .rev()
+        .take(5)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
         .collect();
 
     let names = data_source::load_stock_names(db, &[symbol.to_string()])
@@ -472,6 +533,50 @@ pub async fn analyze_stock(
         }
     });
 
+    let short_term = build_short_term(&all_bars);
+    let fund_snap = fundamentals::load_symbol_fund_snapshot(db, symbol)
+        .await
+        .unwrap_or_default();
+    let income_periods = fundamentals::load_symbol_income_periods(db, symbol, 6)
+        .await
+        .unwrap_or_default();
+    let cashflow_periods = fundamentals::load_symbol_cashflow_periods(db, symbol, 6)
+        .await
+        .unwrap_or_default();
+    let balance_periods = fundamentals::load_symbol_balance_periods(db, symbol, 6)
+        .await
+        .unwrap_or_default();
+
+    let mut fundamentals_dim = FundamentalsDim {
+        report_date: fund_snap.report_date.clone(),
+        fiscal_period: fund_snap.fiscal_period.clone(),
+        pe: tx_snap.as_ref().and_then(|s| s.pe),
+        pb: tx_snap.as_ref().and_then(|s| s.pb),
+        float_mv: tx_snap.as_ref().and_then(|s| s.float_mv),
+        total_mv: tx_snap.as_ref().and_then(|s| s.total_mv),
+        revenue: fund_snap.revenue,
+        revenue_yoy: fund_snap.revenue_yoy,
+        parent_np: fund_snap.parent_np,
+        parent_np_yoy: fund_snap.parent_np_yoy,
+        deduct_np: fund_snap.deduct_np,
+        deduct_np_yoy: fund_snap.deduct_np_yoy,
+        operating_cf: fund_snap.operating_cf,
+        operating_cf_yoy: fund_snap.operating_cf_yoy,
+        receivable: fund_snap.receivable,
+        receivable_yoy: fund_snap.receivable_yoy,
+        total_assets: fund_snap.total_assets,
+        total_liabilities: fund_snap.total_liabilities,
+        total_equity: fund_snap.total_equity,
+        analysis: String::new(),
+    };
+
+    let mut statements_dim = StatementsDim {
+        income: income_periods,
+        cashflow: cashflow_periods,
+        balance: balance_periods,
+        analysis: String::new(),
+    };
+
     let payload = json!({
         "symbol": symbol,
         "name": name,
@@ -480,32 +585,90 @@ pub async fn analyze_stock(
         "quote": quote,
         "bars_5d": bars,
         "detail_summary": summary,
+        "short_term": {
+            "change_5d_pct": short_term.change_5d_pct,
+            "change_10d_pct": short_term.change_10d_pct,
+            "change_20d_pct": short_term.change_20d_pct,
+            "ma5": short_term.ma5,
+            "ma10": short_term.ma10,
+            "ma20": short_term.ma20,
+            "amount_vs_5d_avg": short_term.amount_vs_5d_avg,
+            "bars": &short_term.bars,
+        },
+        "fundamentals": {
+            "report_date": &fundamentals_dim.report_date,
+            "fiscal_period": &fundamentals_dim.fiscal_period,
+            "pe": fundamentals_dim.pe,
+            "pb": fundamentals_dim.pb,
+            "float_mv": fundamentals_dim.float_mv,
+            "total_mv": fundamentals_dim.total_mv,
+            "revenue": fundamentals_dim.revenue,
+            "revenue_yoy": fundamentals_dim.revenue_yoy,
+            "parent_np": fundamentals_dim.parent_np,
+            "parent_np_yoy": fundamentals_dim.parent_np_yoy,
+            "deduct_np": fundamentals_dim.deduct_np,
+            "deduct_np_yoy": fundamentals_dim.deduct_np_yoy,
+            "operating_cf": fundamentals_dim.operating_cf,
+            "operating_cf_yoy": fundamentals_dim.operating_cf_yoy,
+            "receivable": fundamentals_dim.receivable,
+            "total_assets": fundamentals_dim.total_assets,
+            "total_liabilities": fundamentals_dim.total_liabilities,
+            "total_equity": fundamentals_dim.total_equity,
+        },
+        "statements": {
+            "income": &statements_dim.income,
+            "cashflow": &statements_dim.cashflow,
+            "balance": &statements_dim.balance,
+        },
     });
 
-    let (analysis, ai_model, ai_enabled) = if !ai.enabled() {
-        (
-            "AI 未启用：请配置 AI_API_KEY。已返回近5日K线与成交明细摘要。".to_string(),
-            None,
-            false,
-        )
-    } else {
-        let system = crate::ai::prompts::stock_analyze_system();
-        let user = format!(
-            "请根据以下 JSON 分析该股短线强弱与成交细节（买卖力量、放量/缩量、尾盘特征等）：\n{}",
-            serde_json::to_string_pretty(&payload).unwrap_or_default()
-        );
-        match ai.chat(&system, &user).await {
-            Ok(text) => (text, Some(ai.model_name().to_string()), true),
-            Err(e) => {
-                warn!(error = %e, "个股 AI 分析失败");
-                (
-                    format!("AI 分析失败：{e}。下方仍可查看行情与明细摘要。"),
-                    None,
-                    true,
-                )
+    let (mut analysis, mut short_analysis, mut fund_analysis, mut stmt_analysis, ai_model, ai_enabled) =
+        if !ai.enabled() {
+            let msg = "AI 未启用：请配置 AI_API_KEY。已返回各维事实数据。".to_string();
+            (msg.clone(), msg.clone(), msg.clone(), msg, None, false)
+        } else {
+            let system = crate::ai::prompts::stock_analyze_system();
+            let user = format!(
+                "请根据以下 JSON 输出四维解读 JSON（tape/short_term/fundamentals/statements）：\n{}",
+                serde_json::to_string_pretty(&payload).unwrap_or_default()
+            );
+            match ai.chat(&system, &user).await {
+                Ok(text) => {
+                    let parts = parse_dim_analyses(&text);
+                    (
+                        parts.tape,
+                        parts.short_term,
+                        parts.fundamentals,
+                        parts.statements,
+                        Some(ai.model_name().to_string()),
+                        true,
+                    )
+                }
+                Err(e) => {
+                    warn!(error = %e, "个股 AI 分析失败");
+                    let msg = format!("AI 分析失败：{e}。下方仍可查看各维事实数据。");
+                    (msg.clone(), msg.clone(), msg.clone(), msg, None, true)
+                }
             }
-        }
-    };
+        };
+
+    if analysis.is_empty() {
+        analysis = "暂无盘面解读。".into();
+    }
+    if short_analysis.is_empty() {
+        short_analysis = "暂无短线解读。".into();
+    }
+    if fund_analysis.is_empty() {
+        fund_analysis = "暂无基本面解读。".into();
+    }
+    if stmt_analysis.is_empty() {
+        stmt_analysis = "暂无财报解读。".into();
+    }
+
+    let mut short_term = short_term;
+    short_term.analysis = short_analysis;
+    fundamentals_dim.analysis = fund_analysis;
+    statements_dim.analysis = stmt_analysis;
 
     Ok(StockAnalyzeOut {
         symbol: symbol.to_string(),
@@ -518,7 +681,118 @@ pub async fn analyze_stock(
         quote,
         bars,
         analysis,
+        short_term,
+        fundamentals: fundamentals_dim,
+        statements: statements_dim,
         ai_enabled,
         ai_model,
     })
+}
+
+fn change_nd(bars: &[StockAnalyzeBar], lookback: usize) -> Option<f64> {
+    let n = bars.len();
+    if n <= lookback {
+        return None;
+    }
+    let old = bars[n - 1 - lookback].close;
+    let cur = bars[n - 1].close;
+    if old > 1e-10 {
+        Some((cur / old - 1.0) * 100.0)
+    } else {
+        None
+    }
+}
+
+fn sma_close(bars: &[StockAnalyzeBar], window: usize) -> Option<f64> {
+    if bars.len() < window || window == 0 {
+        return None;
+    }
+    let slice = &bars[bars.len() - window..];
+    let sum: f64 = slice.iter().map(|b| b.close).sum();
+    Some(sum / window as f64)
+}
+
+fn build_short_term(all_bars: &[StockAnalyzeBar]) -> ShortTermDim {
+    let show: Vec<StockAnalyzeBar> = all_bars.iter().rev().take(20).cloned().collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let last_amt = all_bars.last().map(|b| b.amount);
+    let avg5 = if all_bars.len() >= 5 {
+        let s: f64 = all_bars[all_bars.len() - 5..].iter().map(|b| b.amount).sum();
+        Some(s / 5.0)
+    } else {
+        None
+    };
+    let amount_vs_5d_avg = match (last_amt, avg5) {
+        (Some(a), Some(avg)) if avg > 1e-6 => Some(a / avg),
+        _ => None,
+    };
+    ShortTermDim {
+        bars: show,
+        change_5d_pct: change_nd(all_bars, 5),
+        change_10d_pct: change_nd(all_bars, 10),
+        change_20d_pct: change_nd(all_bars, 20),
+        ma5: sma_close(all_bars, 5),
+        ma10: sma_close(all_bars, 10),
+        ma20: sma_close(all_bars, 20),
+        amount_vs_5d_avg,
+        analysis: String::new(),
+    }
+}
+
+#[derive(Debug, Default)]
+struct DimAnalyses {
+    tape: String,
+    short_term: String,
+    fundamentals: String,
+    statements: String,
+}
+
+fn parse_dim_analyses(raw: &str) -> DimAnalyses {
+    let trimmed = raw.trim();
+    let json_str = extract_json_object(trimmed).unwrap_or_else(|| trimmed.to_string());
+    if let Ok(v) = serde_json::from_str::<Value>(&json_str) {
+        return DimAnalyses {
+            tape: v
+                .get("tape")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string(),
+            short_term: v
+                .get("short_term")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string(),
+            fundamentals: v
+                .get("fundamentals")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string(),
+            statements: v
+                .get("statements")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string(),
+        };
+    }
+    // 解析失败：整段当作盘面
+    DimAnalyses {
+        tape: trimmed.to_string(),
+        ..DimAnalyses::default()
+    }
+}
+
+fn extract_json_object(s: &str) -> Option<String> {
+    let start = s.find('{')?;
+    let end = s.rfind('}')?;
+    if end > start {
+        Some(s[start..=end].to_string())
+    } else {
+        None
+    }
 }

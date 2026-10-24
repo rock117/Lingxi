@@ -17,7 +17,10 @@ object ApiClient {
 
     private val okHttp = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        // 个股 AI 分析含明细翻页 + 模型推理，整体常超过 1 分钟
+        .readTimeout(180, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(180, TimeUnit.SECONDS)
         .build()
 
     fun create(config: ServerConfig): LingxiApi {

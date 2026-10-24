@@ -13,8 +13,8 @@ use super::rate_limit::RateLimiter;
 
 const DETAILS_URL: &str = "https://stock.gtimg.cn/data/index.php";
 const LOG_BODY_CHARS: usize = 800;
-/// 单页约 70 笔；当日全量翻页上限，防死循环。
-const MAX_PAGES: u32 = 800;
+/// 单页约 70 笔；个股分析翻页上限（约 5600 笔，避免拖垮超时）。
+const DEFAULT_MAX_PAGES: u32 = 80;
 
 #[derive(Clone)]
 pub struct TencentClient {
@@ -44,7 +44,7 @@ impl TencentClient {
         let mut all: Vec<String> = Vec::new();
         let mut page: u32 = 0;
         loop {
-            if page >= MAX_PAGES {
+            if page >= DEFAULT_MAX_PAGES {
                 warn!(
                     target: "tencent_details",
                     %tencent_code,
@@ -188,6 +188,14 @@ pub struct TencentQuoteSnap {
     pub amount: Option<f64>,
     pub turnover_rate: Option<f64>,
     pub amplitude: Option<f64>,
+    /// 市盈率
+    pub pe: Option<f64>,
+    /// 市净率
+    pub pb: Option<f64>,
+    /// 流通市值（亿元，腾讯原字段）
+    pub float_mv: Option<f64>,
+    /// 总市值（亿元）
+    pub total_mv: Option<f64>,
 }
 
 impl TencentClient {
@@ -257,7 +265,11 @@ fn parse_quote_payload(text: &str) -> Option<TencentQuoteSnap> {
         // 37 成交额（万元）
         amount: parse_f64(f.get(37).copied().unwrap_or("")).map(|w| w * 10_000.0),
         turnover_rate: parse_f64(f.get(38).copied().unwrap_or("")),
+        pe: parse_f64(f.get(39).copied().unwrap_or("")),
         amplitude: parse_f64(f.get(43).copied().unwrap_or("")),
+        float_mv: parse_f64(f.get(44).copied().unwrap_or("")),
+        total_mv: parse_f64(f.get(45).copied().unwrap_or("")),
+        pb: parse_f64(f.get(46).copied().unwrap_or("")),
     })
 }
 
