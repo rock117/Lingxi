@@ -1,4 +1,5 @@
 mod access_log;
+mod ai;
 mod config;
 mod db;
 mod error;
@@ -73,6 +74,13 @@ async fn rocket() -> _ {
         tracing::warn!("MIANA_TOKEN 未配置：盘中实时行情与日内推送将不可用");
     }
 
+    let ai = ai::AiClient::from_config(&cfg).expect("初始化 AI 客户端失败");
+    if ai.enabled() {
+        tracing::info!(model = %cfg.ai_model, base = %cfg.ai_api_base, "AI 已启用（仅 backend 内部调用）");
+    } else {
+        tracing::info!("AI_API_KEY 未配置：AiClient 关闭，调用方需自行降级");
+    }
+
     let miana = market::miana::MianaClient::new(&cfg).expect("初始化 Miana 客户端失败");
     let realtime_cache =
         market::realtime_cache::RealtimeDayCache::new(cfg.miana_realtime_cache_secs);
@@ -123,6 +131,7 @@ async fn rocket() -> _ {
         })
         .manage(db)
         .manage(cfg)
+        .manage(ai)
         .manage(miana)
         .manage(realtime_cache)
         .manage(hub)

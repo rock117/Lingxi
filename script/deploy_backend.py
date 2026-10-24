@@ -60,6 +60,10 @@ MIANA_BASE_URL = os.getenv("MIANA_BASE_URL", "https://miana.com.cn").strip()
 MIANA_TOKEN = os.getenv("MIANA_TOKEN", "").strip()
 MIANA_RATE_LIMIT_PER_MIN = os.getenv("MIANA_RATE_LIMIT_PER_MIN", "480").strip()
 MIANA_REALTIME_CACHE_SECS = os.getenv("MIANA_REALTIME_CACHE_SECS", "120").strip()
+AI_API_BASE = os.getenv("AI_API_BASE", "https://api.deepseek.com").strip()
+AI_API_KEY = os.getenv("AI_API_KEY", "").strip()
+AI_MODEL = os.getenv("AI_MODEL", "deepseek-flash").strip()
+AI_TIMEOUT_SECS = os.getenv("AI_TIMEOUT_SECS", "30").strip()
 
 
 def parse_gitignore(repo_dir: Path) -> list[str]:
@@ -208,6 +212,10 @@ def systemd_unit(
     miana_token: str,
     miana_rate_limit_per_min: str,
     miana_realtime_cache_secs: str,
+    ai_api_base: str,
+    ai_api_key: str,
+    ai_model: str,
+    ai_timeout_secs: str,
 ) -> str:
     """app_dir 下直接放可执行文件 lingxi-backend（非 target/release）。"""
     bin_path = f"{app_dir}/{BINARY_NAME}"
@@ -215,6 +223,9 @@ def systemd_unit(
     db_esc = database_url.replace("%", "%%")
     miana_esc = miana_token.replace("%", "%%")
     base_esc = miana_base_url.replace("%", "%%")
+    ai_base_esc = ai_api_base.replace("%", "%%")
+    ai_key_esc = ai_api_key.replace("%", "%%")
+    ai_model_esc = ai_model.replace("%", "%%")
     return f"""[Unit]
 Description=Lingxi Backend
 After=network.target
@@ -229,6 +240,10 @@ Environment=MIANA_BASE_URL={base_esc}
 Environment=MIANA_TOKEN={miana_esc}
 Environment=MIANA_RATE_LIMIT_PER_MIN={miana_rate_limit_per_min}
 Environment=MIANA_REALTIME_CACHE_SECS={miana_realtime_cache_secs}
+Environment=AI_API_BASE={ai_base_esc}
+Environment=AI_API_KEY={ai_key_esc}
+Environment=AI_MODEL={ai_model_esc}
+Environment=AI_TIMEOUT_SECS={ai_timeout_secs}
 Environment=LOG_DIR={log_dir}
 Environment=LOG_MAX_BYTES=10485760
 Environment=RUST_LOG=info,sqlx=warn,sqlx::query=warn
@@ -257,6 +272,10 @@ def ensure_systemd_and_restart(
             MIANA_TOKEN,
             MIANA_RATE_LIMIT_PER_MIN,
             MIANA_REALTIME_CACHE_SECS,
+            AI_API_BASE,
+            AI_API_KEY,
+            AI_MODEL,
+            AI_TIMEOUT_SECS,
         ),
         encoding="utf-8",
     )

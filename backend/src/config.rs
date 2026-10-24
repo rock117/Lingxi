@@ -18,6 +18,14 @@ pub struct AppConfig {
     pub log_dir: PathBuf,
     /// 单个日志文件最大字节数（默认 10MiB）。
     pub log_max_bytes: u64,
+    /// OpenAI 兼容 API 根路径（如 `https://api.openai.com/v1`）。
+    pub ai_api_base: String,
+    /// 大模型 API Key；为空则 AI 关闭。
+    pub ai_api_key: String,
+    /// 模型名。
+    pub ai_model: String,
+    /// AI HTTP 超时秒数。
+    pub ai_timeout_secs: u64,
 }
 
 impl Default for AppConfig {
@@ -49,6 +57,15 @@ impl Default for AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(10 * 1024 * 1024),
+            // 默认对接 DeepSeek（OpenAI 兼容）；见 https://api-docs.deepseek.com/
+            ai_api_base: env::var("AI_API_BASE")
+                .unwrap_or_else(|_| "https://api.deepseek.com".to_string()),
+            ai_api_key: env::var("AI_API_KEY").unwrap_or_default(),
+            ai_model: env::var("AI_MODEL").unwrap_or_else(|_| "deepseek-flash".to_string()),
+            ai_timeout_secs: env::var("AI_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(30),
         }
     }
 }
