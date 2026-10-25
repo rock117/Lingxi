@@ -1,6 +1,7 @@
 package com.lingxi.app.condition
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,6 +26,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
@@ -102,6 +105,7 @@ fun StockAnalyzeScreen(
     val query by viewModel.stockSearchQuery.collectAsStateWithLifecycle()
     val hits by viewModel.stockSearchHits.collectAsStateWithLifecycle()
     val searchLoading by viewModel.stockSearchLoading.collectAsStateWithLifecycle()
+    val searchHistory by viewModel.analyzeSearchHistory.collectAsStateWithLifecycle()
 
     var selectedSymbol by remember { mutableStateOf(initialSymbol.orEmpty()) }
     var selectedName by remember { mutableStateOf("") }
@@ -145,11 +149,14 @@ fun StockAnalyzeScreen(
         dimTab = 0
         searchOpen = false
         viewModel.onStockSearchQueryChange("")
+        viewModel.rememberAnalyzeStock(hit)
         viewModel.loadStockAnalyze(hit.symbol)
     }
 
     val showSearchPanel =
         !hasStock || searchOpen || query.isNotBlank() || hits.isNotEmpty()
+    val showHistory =
+        showSearchPanel && query.isBlank() && hits.isEmpty() && searchHistory.isNotEmpty()
 
     val body: @Composable (PaddingValues) -> Unit = { padding ->
         Column(
@@ -191,6 +198,17 @@ fun StockAnalyzeScreen(
                             .padding(horizontal = 16.dp)
                             .padding(bottom = 4.dp),
                     )
+                } else if (showHistory) {
+                    SearchHistoryList(
+                        items = searchHistory,
+                        onSelect = ::selectHit,
+                        onRemove = viewModel::removeAnalyzeHistory,
+                        onClearAll = viewModel::clearAnalyzeHistory,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                            .padding(bottom = 4.dp),
+                    )
                 }
             } else if (hasStock) {
                 CompactStockChrome(
@@ -224,10 +242,10 @@ fun StockAnalyzeScreen(
             }
 
             when {
-                !hasStock && hits.isEmpty() -> {
+                !hasStock && hits.isEmpty() && !showHistory -> {
                     EmptyHint(modifier = Modifier.weight(1f))
                 }
-                hits.isNotEmpty() && !hasStock -> {
+                (!hasStock && hits.isNotEmpty()) || (!hasStock && showHistory) -> {
                     Spacer(modifier = Modifier.weight(1f))
                 }
                 hasStock && loading && result == null -> {
@@ -1046,6 +1064,100 @@ private fun SearchHitList(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SearchHistoryList(
+    items: List<StockSearchHit>,
+    onSelect: (StockSearchHit) -> Unit,
+    onRemove: (String) -> Unit,
+    onClearAll: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val chipBg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+    val chipBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+    Column(modifier = modifier.padding(top = 2.dp, bottom = 6.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 2.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Default.History,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                "最近分析",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                "清空",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(onClick = onClearAll)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items.take(16).forEach { hit ->
+                val title = hit.name.ifBlank { hit.symbol }
+                val code = hit.symbol.ifBlank { hit.code }
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(chipBg)
+                        .border(1.dp, chipBorder, RoundedCornerShape(10.dp))
+                        .clickable { onSelect(hit) }
+                        .padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.padding(end = 2.dp)) {
+                        Text(
+                            title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (code.isNotBlank() && code != title) {
+                            Text(
+                                code,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "删除",
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { onRemove(hit.symbol) }
+                            .padding(6.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
                     )
                 }
             }

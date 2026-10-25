@@ -13,13 +13,16 @@ import com.lingxi.app.data.model.StockAnalyze
 import com.lingxi.app.data.model.StockSearchHit
 import com.lingxi.app.data.model.StrategyDef
 import com.lingxi.app.data.model.UpdateConditionRequest
+import com.lingxi.app.data.prefs.AnalyzeHistoryPrefs
 import com.lingxi.app.data.prefs.ServerPrefs
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
@@ -36,6 +39,7 @@ import kotlinx.serialization.json.put
 
 class ScreenViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = ServerPrefs(application)
+    private val analyzeHistory = AnalyzeHistoryPrefs(application)
 
     private val _strategies = MutableStateFlow<List<StrategyDef>>(emptyList())
     val strategies: StateFlow<List<StrategyDef>> = _strategies.asStateFlow()
@@ -77,11 +81,43 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
     private val _stockSearchLoading = MutableStateFlow(false)
     val stockSearchLoading: StateFlow<Boolean> = _stockSearchLoading.asStateFlow()
 
+    val analyzeSearchHistory: StateFlow<List<StockSearchHit>> =
+        analyzeHistory.historyFlow.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            emptyList(),
+        )
+
     private var stockSearchJob: Job? = null
     private var stockAnalyzeAiJob: Job? = null
 
     init {
         refresh()
+    }
+
+    fun rememberAnalyzeStock(hit: StockSearchHit) {
+        viewModelScope.launch {
+            analyzeHistory.remember(
+                symbol = hit.symbol,
+                name = hit.name,
+                code = hit.code,
+                namePinyin = hit.namePinyin,
+            )
+        }
+    }
+
+    fun rememberAnalyzeStock(symbol: String, name: String) {
+        viewModelScope.launch {
+            analyzeHistory.remember(symbol = symbol, name = name)
+        }
+    }
+
+    fun removeAnalyzeHistory(symbol: String) {
+        viewModelScope.launch { analyzeHistory.remove(symbol) }
+    }
+
+    fun clearAnalyzeHistory() {
+        viewModelScope.launch { analyzeHistory.clear() }
     }
 
     fun clearStockAnalyze() {
@@ -124,7 +160,12 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
             _stockAnalyze.value = null
             runCatching {
                 val api = ApiClient.create(prefs.configFlow.first())
-                _stockAnalyze.value = api.stockAnalyze(symbol)
+                val out = api.stockAnalyze(symbol)
+                _stockAnalyze.value = out
+                analyzeHistory.remember(
+                    symbol = out.symbol.ifBlank { symbol },
+                    name = out.name,
+                )
             }.onFailure {
                 _stockAnalyzeError.value = it.message ?: "分析失败"
             }
