@@ -204,6 +204,8 @@ pub struct StockAnalyzeOut {
     pub detail_last_time: Option<String>,
     pub detail_tick_count: i64,
     pub detail_updated_at: Option<String>,
+    /// `pending` = 未拉实时明细（等 `/analyze/ticks`）；`ready` = 已有摘要；`empty` = 已拉但无数据
+    pub detail_status: String,
     /// 当日价量摘要；无 K 线时为 null
     pub quote: Option<StockAnalyzeQuote>,
     /// 近 5 日 K（盘面 Tab）
@@ -231,6 +233,19 @@ pub struct StockAnalyzeAiOut {
     pub ai_model: Option<String>,
     /// 是否命中进程内缓存
     pub cached: bool,
+}
+
+/// 异步补全成交明细（东财/腾讯），并回写事实缓存供盘面 AI。
+#[derive(Debug, Clone, Serialize)]
+pub struct StockAnalyzeTicksOut {
+    pub symbol: String,
+    pub trade_date: String,
+    pub detail_source: String,
+    pub detail_last_time: Option<String>,
+    pub detail_tick_count: i64,
+    pub detail_updated_at: Option<String>,
+    pub detail_status: String,
+    pub detail_summary: DetailSummary,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -578,75 +593,72 @@ fn large_print_follow(parsed: &[(String, f64, f64, i32)], large: f64) -> (Option
     (avg(&buy_moves), avg(&sell_moves))
 }
 
-pub async fn analyze_stock(
+struct LoadedTicks {
+    details: Vec<String>,
+    source: String,
+    updated_at: Option<String>,
+    used_trade_date: NaiveDate,
+    /// pending | ready | empty
+    status: String,
+}
+
+/// `live=false`：只读库（快）；`live=true`：东财→腾讯→库。
+async fn load_ticks(
     db: &DatabaseConnection,
     eastmoney: &EastmoneyClient,
     tencent: &TencentClient,
-    ai: &AiClient,
     symbol: &str,
-) -> anyhow::Result<StockAnalyzeOut> {
-    let symbol = symbol.trim();
-    if symbol.is_empty() || symbol.len() > 32 {
-        anyhow::bail!("symbol 无效");
-    }
-
-    let trade_date = latest_open_trade_date(db).await?;
+    trade_date: NaiveDate,
+    live: bool,
+) -> anyhow::Result<LoadedTicks> {
     let trade_date_s = trade_date.format("%Y-%m-%d").to_string();
-
-    let mut detail_source = "db".to_string();
     let mut details: Vec<String> = Vec::new();
+    let mut detail_source = "db".to_string();
     let mut detail_updated_at: Option<String> = None;
     let mut used_trade_date = trade_date;
-
-    // 1) 东财 → 2) 腾讯（仅当日沪深）→ 3) 库
     let mut live_ok = false;
-    if let Some(secid) = eastmoney::symbol_to_secid(symbol) {
-        match eastmoney.fetch_trade_details(&secid).await {
-            Ok(rows) if !rows.is_empty() => {
-                details = rows;
-                detail_source = "eastmoney".into();
-                live_ok = true;
-            }
-            Ok(_) => {
-                warn!(%symbol, secid, "东财成交明细为空，尝试腾讯");
-            }
-            Err(e) => {
-                warn!(
+
+    if live {
+        if let Some(secid) = eastmoney::symbol_to_secid(symbol) {
+            match eastmoney.fetch_trade_details(&secid).await {
+                Ok(rows) if !rows.is_empty() => {
+                    details = rows;
+                    detail_source = "eastmoney".into();
+                    live_ok = true;
+                }
+                Ok(_) => warn!(%symbol, secid, "东财成交明细为空，尝试腾讯"),
+                Err(e) => warn!(
                     %symbol,
                     secid,
                     error = %e,
                     error_debug = ?e,
                     "东财成交明细拉取失败，尝试腾讯"
-                );
+                ),
             }
+        } else {
+            warn!(%symbol, "无法映射东财 secid，尝试腾讯");
         }
-    } else {
-        warn!(%symbol, "无法映射东财 secid，尝试腾讯");
-    }
 
-    if !live_ok {
-        if let Some(tc) = tencent::symbol_to_tencent_code(symbol) {
-            match tencent.fetch_trade_details_today(&tc).await {
-                Ok(rows) if !rows.is_empty() => {
-                    details = rows;
-                    detail_source = "tencent".into();
-                    live_ok = true;
-                }
-                Ok(_) => {
-                    warn!(%symbol, tencent_code = %tc, "腾讯成交明细为空，尝试读库");
-                }
-                Err(e) => {
-                    warn!(
+        if !live_ok {
+            if let Some(tc) = tencent::symbol_to_tencent_code(symbol) {
+                match tencent.fetch_trade_details_today(&tc).await {
+                    Ok(rows) if !rows.is_empty() => {
+                        details = rows;
+                        detail_source = "tencent".into();
+                        live_ok = true;
+                    }
+                    Ok(_) => warn!(%symbol, tencent_code = %tc, "腾讯成交明细为空，尝试读库"),
+                    Err(e) => warn!(
                         %symbol,
                         tencent_code = %tc,
                         error = %e,
                         error_debug = ?e,
                         "腾讯成交明细拉取失败，尝试读库"
-                    );
+                    ),
                 }
+            } else {
+                warn!(%symbol, "无法映射腾讯代码（北交所等不支持），尝试读库");
             }
-        } else {
-            warn!(%symbol, "无法映射腾讯代码（北交所等不支持），尝试读库");
         }
     }
 
@@ -658,7 +670,16 @@ pub async fn analyze_stock(
             source = %detail_source,
             "成交明细实时拉取成功（不入库）"
         );
-    } else if let Some(row) = load_trade_detail(db, symbol, trade_date).await? {
+        return Ok(LoadedTicks {
+            details,
+            source: detail_source,
+            updated_at: None,
+            used_trade_date,
+            status: "ready".into(),
+        });
+    }
+
+    if let Some(row) = load_trade_detail(db, symbol, trade_date).await? {
         details = details_from_json(&row.detail);
         used_trade_date = row.trade_date;
         detail_updated_at = Some(row.updated_at);
@@ -675,6 +696,47 @@ pub async fn analyze_stock(
             "指定交易日无明细，改用库内最近一日"
         );
     }
+
+    let status = if !details.is_empty() {
+        "ready"
+    } else if live {
+        "empty"
+    } else {
+        // 主分析默认不拉实时，留给 /analyze/ticks
+        "pending"
+    }
+    .to_string();
+
+    Ok(LoadedTicks {
+        details,
+        source: detail_source,
+        updated_at: detail_updated_at,
+        used_trade_date,
+        status,
+    })
+}
+
+/// 个股事实分析。`live_ticks=false`（默认）跳过东财/腾讯翻页，秒级返回；明细另调 `refresh_analyze_ticks`。
+pub async fn analyze_stock(
+    db: &DatabaseConnection,
+    eastmoney: &EastmoneyClient,
+    tencent: &TencentClient,
+    ai: &AiClient,
+    symbol: &str,
+    live_ticks: bool,
+) -> anyhow::Result<StockAnalyzeOut> {
+    let symbol = symbol.trim();
+    if symbol.is_empty() || symbol.len() > 32 {
+        anyhow::bail!("symbol 无效");
+    }
+
+    let trade_date = latest_open_trade_date(db).await?;
+    let ticks = load_ticks(db, eastmoney, tencent, symbol, trade_date, live_ticks).await?;
+    let details = ticks.details;
+    let detail_source = ticks.source;
+    let detail_updated_at = ticks.updated_at;
+    let used_trade_date = ticks.used_trade_date;
+    let detail_status = ticks.status;
 
     let bars_raw = data_source::load_stock_recent_klines(db, symbol, 30).await?;
     let all_bars: Vec<StockAnalyzeBar> = bars_raw
@@ -893,6 +955,7 @@ pub async fn analyze_stock(
         detail_last_time,
         detail_tick_count: details.len() as i64,
         detail_updated_at,
+        detail_status,
         quote,
         bars,
         detail_summary: summary,
@@ -924,6 +987,70 @@ pub async fn analyze_stock(
 }
 
 /// 按维调用 AI（复用事实缓存；结果进程内缓存）。`force` 跳过 AI 缓存。
+/// 补拉实时成交明细，并合并进事实缓存（供盘面摘要 / tape AI）。
+pub async fn refresh_analyze_ticks(
+    db: &DatabaseConnection,
+    eastmoney: &EastmoneyClient,
+    tencent: &TencentClient,
+    ai: &AiClient,
+    symbol: &str,
+) -> anyhow::Result<StockAnalyzeTicksOut> {
+    let symbol = symbol.trim();
+    if symbol.is_empty() || symbol.len() > 32 {
+        anyhow::bail!("symbol 无效");
+    }
+
+    // 确保有事实缓存骨架（不含实时明细）
+    if cache_get_facts(symbol).is_none() {
+        let _ = analyze_stock(db, eastmoney, tencent, ai, symbol, false).await?;
+    }
+
+    let trade_date = latest_open_trade_date(db).await?;
+    let ticks = load_ticks(db, eastmoney, tencent, symbol, trade_date, true).await?;
+    let summary = summarize_details(&ticks.details);
+    let detail_last_time = summary.last_time.as_ref().map(|t| {
+        format!("{} {}", ticks.used_trade_date.format("%Y-%m-%d"), t)
+    });
+    let trade_date_out = ticks.used_trade_date.format("%Y-%m-%d").to_string();
+
+    // 回写缓存：更新 out + tape_payload
+    if let Some(mut facts) = cache_get_facts(symbol) {
+        facts.out.detail_source = ticks.source.clone();
+        facts.out.detail_last_time = detail_last_time.clone();
+        facts.out.detail_tick_count = ticks.details.len() as i64;
+        facts.out.detail_updated_at = ticks.updated_at.clone();
+        facts.out.detail_status = ticks.status.clone();
+        facts.out.detail_summary = summary.clone();
+        facts.out.trade_date = trade_date_out.clone();
+        let meta = json!({
+            "symbol": facts.out.symbol,
+            "name": facts.out.name,
+            "trade_date": trade_date_out,
+        });
+        facts.tape_payload = json!({
+            "meta": meta,
+            "quote": facts.out.quote,
+            "bars_5d": facts.out.bars,
+            "detail_source": ticks.source,
+            "detail_summary": summary,
+        });
+        // 明细更新后旧 tape AI 失效
+        cache_invalidate_ai(symbol, &trade_date_out, AnalyzeDimKind::Tape.as_str());
+        cache_put_facts(symbol, facts);
+    }
+
+    Ok(StockAnalyzeTicksOut {
+        symbol: symbol.to_string(),
+        trade_date: trade_date_out,
+        detail_source: ticks.source,
+        detail_last_time,
+        detail_tick_count: ticks.details.len() as i64,
+        detail_updated_at: ticks.updated_at,
+        detail_status: ticks.status,
+        detail_summary: summary,
+    })
+}
+
 pub async fn analyze_dim(
     db: &DatabaseConnection,
     eastmoney: &EastmoneyClient,
@@ -950,13 +1077,19 @@ pub async fn analyze_dim(
         });
     }
 
-    let facts = match cache_get_facts(symbol) {
+    let mut facts = match cache_get_facts(symbol) {
         Some(f) => f,
         None => {
-            let _ = analyze_stock(db, eastmoney, tencent, ai, symbol).await?;
+            let _ = analyze_stock(db, eastmoney, tencent, ai, symbol, false).await?;
             cache_get_facts(symbol).ok_or_else(|| anyhow::anyhow!("事实缓存写入失败"))?
         }
     };
+
+    // 盘面 AI 需要实时明细时先补拉
+    if dim == AnalyzeDimKind::Tape && facts.out.detail_status == "pending" {
+        let _ = refresh_analyze_ticks(db, eastmoney, tencent, ai, symbol).await?;
+        facts = cache_get_facts(symbol).ok_or_else(|| anyhow::anyhow!("明细回写缓存失败"))?;
+    }
 
     let trade_date = facts.out.trade_date.clone();
     if !force {
@@ -1089,6 +1222,12 @@ fn cache_get_ai(symbol: &str, trade_date: &str, dim: &str) -> Option<DimAi> {
         return None;
     }
     Some(v.clone())
+}
+
+fn cache_invalidate_ai(symbol: &str, trade_date: &str, dim: &str) {
+    if let Ok(mut g) = mem_cache().lock() {
+        g.ai.remove(&ai_cache_key(symbol, trade_date, dim));
+    }
 }
 
 #[derive(Debug, Deserialize)]

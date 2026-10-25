@@ -230,6 +230,8 @@ data class StockAnalyze(
     @SerialName("detail_last_time") val detailLastTime: String? = null,
     @SerialName("detail_tick_count") val detailTickCount: Long = 0,
     @SerialName("detail_updated_at") val detailUpdatedAt: String? = null,
+    /** pending = 等 ticks；ready / empty */
+    @SerialName("detail_status") val detailStatus: String = "pending",
     val quote: StockAnalyzeQuote? = null,
     val bars: List<StockBar> = emptyList(),
     @SerialName("detail_summary") val detailSummary: DetailSummary = DetailSummary(),
@@ -253,4 +255,17 @@ data class StockAnalyzeAi(
     @SerialName("ai_enabled") val aiEnabled: Boolean = false,
     @SerialName("ai_model") val aiModel: String? = null,
     val cached: Boolean = false,
+)
+
+/** `GET /api/market/stock/analyze/ticks` */
+@Serializable
+data class StockAnalyzeTicks(
+    val symbol: String = "",
+    @SerialName("trade_date") val tradeDate: String = "",
+    @SerialName("detail_source") val detailSource: String = "",
+    @SerialName("detail_last_time") val detailLastTime: String? = null,
+    @SerialName("detail_tick_count") val detailTickCount: Long = 0,
+    @SerialName("detail_updated_at") val detailUpdatedAt: String? = null,
+    @SerialName("detail_status") val detailStatus: String = "empty",
+    @SerialName("detail_summary") val detailSummary: DetailSummary = DetailSummary(),
 )

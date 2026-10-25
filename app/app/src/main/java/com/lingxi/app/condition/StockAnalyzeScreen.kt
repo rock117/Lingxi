@@ -102,6 +102,7 @@ fun StockAnalyzeScreen(
     val loading by viewModel.stockAnalyzeLoading.collectAsStateWithLifecycle()
     val error by viewModel.stockAnalyzeError.collectAsStateWithLifecycle()
     val aiLoadingDim by viewModel.stockAnalyzeAiLoadingDim.collectAsStateWithLifecycle()
+    val ticksLoading by viewModel.stockAnalyzeTicksLoading.collectAsStateWithLifecycle()
     val query by viewModel.stockSearchQuery.collectAsStateWithLifecycle()
     val hits by viewModel.stockSearchHits.collectAsStateWithLifecycle()
     val searchLoading by viewModel.stockSearchLoading.collectAsStateWithLifecycle()
@@ -129,11 +130,14 @@ fun StockAnalyzeScreen(
         if (r.name.isNotBlank()) selectedName = r.name
     }
 
-    // 切换 Tab 或事实就绪后，懒加载当前维 AI
-    LaunchedEffect(result?.symbol, result?.aiEnabled, dimTab) {
+    // 切换 Tab 或事实就绪后，懒加载当前维 AI（盘面等明细补全后再请求）
+    LaunchedEffect(result?.symbol, result?.aiEnabled, result?.detailStatus, dimTab, ticksLoading) {
         val r = result ?: return@LaunchedEffect
         if (r.symbol.isBlank() || !r.aiEnabled) return@LaunchedEffect
         val dim = AnalyzeDim.entries[dimTab.coerceIn(0, AnalyzeDim.entries.lastIndex)]
+        if (dim == AnalyzeDim.Tape && (ticksLoading || r.detailStatus == "pending")) {
+            return@LaunchedEffect
+        }
         viewModel.loadStockAnalyzeAi(r.symbol, dim.apiKey)
     }
 
@@ -294,10 +298,12 @@ fun StockAnalyzeScreen(
                         AnalyzeDim.Tape -> TapeTabContent(
                             result = r,
                             aiLoading = aiBusy,
+                            ticksLoading = ticksLoading,
                             quote = r.quote,
                             onRetryAi = {
                                 viewModel.loadStockAnalyzeAi(r.symbol, dim.apiKey, force = true)
                             },
+                            onRetryTicks = { viewModel.loadStockAnalyzeTicks(r.symbol) },
                             modifier = Modifier.weight(1f),
                         )
                         AnalyzeDim.ShortTerm -> ShortTermTabContent(
@@ -498,8 +504,10 @@ private fun CompactStockChrome(
 private fun TapeTabContent(
     result: StockAnalyze,
     aiLoading: Boolean,
+    ticksLoading: Boolean,
     quote: StockAnalyzeQuote? = null,
     onRetryAi: () -> Unit = {},
+    onRetryTicks: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -519,7 +527,14 @@ private fun TapeTabContent(
                 updatedAt = result.detailUpdatedAt,
             )
         }
-        item { DetailSummaryPanel(result.detailSummary) }
+        item {
+            DetailSummaryPanel(
+                summary = result.detailSummary,
+                status = result.detailStatus,
+                loading = ticksLoading,
+                onRetry = onRetryTicks,
+            )
+        }
         item {
             AnalysisPanel(
                 title = "盘面 AI",
@@ -1343,7 +1358,13 @@ private fun MetaGrid(pairs: List<Pair<String, String>>) {
 }
 
 @Composable
-private fun DetailSummaryPanel(s: DetailSummary) {
+private fun DetailSummaryPanel(
+    summary: DetailSummary,
+    status: String,
+    loading: Boolean,
+    onRetry: () -> Unit = {},
+) {
+    val s = summary
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -1351,27 +1372,60 @@ private fun DetailSummaryPanel(s: DetailSummary) {
         tonalElevation = 1.dp,
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                "盘面摘要",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "盘面摘要",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                if (loading) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "拉取明细中…",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(12.dp))
-            QuoteGrid(
-                listOf(
-                    "买盘占比" to (s.buyRatio?.let { String.format(Locale.US, "%.0f%%", it * 100) } ?: "—"),
-                    "卖盘占比" to (s.sellRatio?.let { String.format(Locale.US, "%.0f%%", it * 100) } ?: "—"),
-                    "VWAP" to (s.vwapEst?.let { formatAnalyzePrice(it) } ?: "—"),
-                    "价相对VWAP" to formatOptPct(s.priceVsVwapPct),
-                    "大单净手数" to String.format(Locale.US, "%.0f", s.largeNetLots),
-                    "大买后跟价" to formatOptPct(s.largeBuyFollowPct),
-                    "开盘买/卖" to String.format(Locale.US, "%.0f/%.0f", s.openBuyLots, s.openSellLots),
-                    "尾盘买/卖" to String.format(Locale.US, "%.0f/%.0f", s.closeBuyLots, s.closeSellLots),
-                ),
-            )
-            if (s.labels.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(10.dp))
-                FlagChips(s.labels)
+            if (loading && status == "pending" && s.tickCount == 0) {
+                Text(
+                    "报价与其它维度已就绪，正在后台拉取成交明细（东财/腾讯翻页较慢）。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else if (!loading && status == "empty" && s.tickCount == 0) {
+                Text(
+                    "暂无成交明细。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "重试拉取",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable(onClick = onRetry),
+                )
+            } else {
+                QuoteGrid(
+                    listOf(
+                        "买盘占比" to (s.buyRatio?.let { String.format(Locale.US, "%.0f%%", it * 100) } ?: "—"),
+                        "卖盘占比" to (s.sellRatio?.let { String.format(Locale.US, "%.0f%%", it * 100) } ?: "—"),
+                        "VWAP" to (s.vwapEst?.let { formatAnalyzePrice(it) } ?: "—"),
+                        "价相对VWAP" to formatOptPct(s.priceVsVwapPct),
+                        "大单净手数" to String.format(Locale.US, "%.0f", s.largeNetLots),
+                        "大买后跟价" to formatOptPct(s.largeBuyFollowPct),
+                        "开盘买/卖" to String.format(Locale.US, "%.0f/%.0f", s.openBuyLots, s.openSellLots),
+                        "尾盘买/卖" to String.format(Locale.US, "%.0f/%.0f", s.closeBuyLots, s.closeSellLots),
+                    ),
+                )
+                if (s.labels.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    FlagChips(s.labels)
+                }
             }
         }
     }

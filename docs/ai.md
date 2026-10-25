@@ -82,13 +82,16 @@ backend/src/market/
 
 ### 4.1 HTTP
 
-**事实（快）：** `GET /api/market/stock/analyze?symbol=600519.SH`  
-只拉 K/明细/估值/财报并算确定性标签；各维 `ai.status=pending`（或 AI 关闭时为 `disabled`），**不调大模型**。
+**事实（快）：** `GET /api/market/stock/analyze?symbol=600519.SH&live_ticks=0`  
+默认 **不** 拉东财/腾讯翻页明细（`detail_status=pending`），只读库内明细（若有）+ K/估值/财报；各维 `ai.status=pending`，**不调大模型**。`live_ticks=1` 可同步拉实时明细（慢）。
+
+**成交明细（慢，异步）：** `GET /api/market/stock/analyze/ticks?symbol=`  
+东财→腾讯→库；回写事实缓存；`detail_status=ready|empty`。App 先出分析页再后台补全。
 
 **分维 AI（懒加载）：** `GET /api/market/stock/analyze/ai?symbol=…&dim=tape|short_term|fundamentals|statements&force=0`  
 - 复用进程内事实缓存（约 3 分钟）；AI 结果缓存约 30 分钟（同 symbol+trade_date+dim）。  
-- `force=1` 跳过 AI 缓存重生成。  
-- 返回 `{ dim, ai: { status, text, bias, confidence, flags }, cached, … }`。
+- `dim=tape` 且明细仍 `pending` 时，服务端会先补拉 ticks。  
+- `force=1` 跳过 AI 缓存重生成。
 
 事实响应字段（节选）：
 

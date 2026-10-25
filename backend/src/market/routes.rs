@@ -29,7 +29,9 @@ use super::fund_stats::{self as fund_stats_svc, FundStatsMeta, FundStatsResult};
 use super::fundamentals;
 use super::screen::{self, ScreenExpression, ScreenResult, StrategyDef};
 use super::session;
-use super::stock_analyze::{self as stock_analyze_svc, StockAnalyzeAiOut, StockAnalyzeOut};
+use super::stock_analyze::{
+    self as stock_analyze_svc, StockAnalyzeAiOut, StockAnalyzeOut, StockAnalyzeTicksOut,
+};
 use super::tencent::TencentClient;
 
 /// MTT 需要至少 MA60 + 斜率回看，默认取最近 70 个交易日。
@@ -305,16 +307,39 @@ pub async fn stocks_search(
     }))
 }
 
-/// `GET /api/market/stock/analyze?symbol=600519.SH` — 事实数据（K/明细/指标）；AI 为 pending，需另调 `/analyze/ai`。
-#[get("/api/market/stock/analyze?<symbol>")]
+/// `GET /api/market/stock/analyze?symbol=600519.SH&live_ticks=0` — 事实（默认不拉实时明细，秒级）。
+#[get("/api/market/stock/analyze?<symbol>&<live_ticks>")]
 pub async fn stock_analyze_query(
     db: &rocket::State<DatabaseConnection>,
     eastmoney: &rocket::State<EastmoneyClient>,
     tencent: &rocket::State<TencentClient>,
     ai: &rocket::State<AiClient>,
     symbol: &str,
+    live_ticks: Option<bool>,
 ) -> AppResult<Json<StockAnalyzeOut>> {
     let out = stock_analyze_svc::analyze_stock(
+        db.inner(),
+        eastmoney.inner(),
+        tencent.inner(),
+        ai.inner(),
+        symbol,
+        live_ticks.unwrap_or(false),
+    )
+    .await
+    .map_err(AppError::Internal)?;
+    Ok(Json(out))
+}
+
+/// `GET /api/market/stock/analyze/ticks?symbol=` — 异步补全成交明细（东财/腾讯），回写缓存。
+#[get("/api/market/stock/analyze/ticks?<symbol>")]
+pub async fn stock_analyze_ticks_query(
+    db: &rocket::State<DatabaseConnection>,
+    eastmoney: &rocket::State<EastmoneyClient>,
+    tencent: &rocket::State<TencentClient>,
+    ai: &rocket::State<AiClient>,
+    symbol: &str,
+) -> AppResult<Json<StockAnalyzeTicksOut>> {
+    let out = stock_analyze_svc::refresh_analyze_ticks(
         db.inner(),
         eastmoney.inner(),
         tencent.inner(),

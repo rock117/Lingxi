@@ -12,6 +12,7 @@ import com.lingxi.app.data.model.ScreenRequest
 import com.lingxi.app.data.model.ScreenResult
 import com.lingxi.app.data.model.StockAnalyze
 import com.lingxi.app.data.model.StockAnalyzeAi
+import com.lingxi.app.data.model.StockAnalyzeTicks
 import com.lingxi.app.data.model.StockSearchResult
 import com.lingxi.app.data.model.StrategyDef
 import com.lingxi.app.data.model.UpdateConditionRequest
@@ -77,7 +78,13 @@ interface LingxiApi {
     ): StockSearchResult
 
     @GET("api/market/stock/analyze")
-    suspend fun stockAnalyze(@Query("symbol") symbol: String): StockAnalyze
+    suspend fun stockAnalyze(
+        @Query("symbol") symbol: String,
+        @Query("live_ticks") liveTicks: Boolean = false,
+    ): StockAnalyze
+
+    @GET("api/market/stock/analyze/ticks")
+    suspend fun stockAnalyzeTicks(@Query("symbol") symbol: String): StockAnalyzeTicks
 
     @GET("api/market/stock/analyze/ai")
     suspend fun stockAnalyzeAi(

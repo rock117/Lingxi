@@ -72,6 +72,9 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
     private val _stockAnalyzeAiLoadingDim = MutableStateFlow<String?>(null)
     val stockAnalyzeAiLoadingDim: StateFlow<String?> = _stockAnalyzeAiLoadingDim.asStateFlow()
 
+    private val _stockAnalyzeTicksLoading = MutableStateFlow(false)
+    val stockAnalyzeTicksLoading: StateFlow<Boolean> = _stockAnalyzeTicksLoading.asStateFlow()
+
     private val _stockSearchQuery = MutableStateFlow("")
     val stockSearchQuery: StateFlow<String> = _stockSearchQuery.asStateFlow()
 
@@ -90,6 +93,7 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
 
     private var stockSearchJob: Job? = null
     private var stockAnalyzeAiJob: Job? = null
+    private var stockAnalyzeTicksJob: Job? = null
 
     init {
         refresh()
@@ -122,9 +126,11 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
 
     fun clearStockAnalyze() {
         stockAnalyzeAiJob?.cancel()
+        stockAnalyzeTicksJob?.cancel()
         _stockAnalyze.value = null
         _stockAnalyzeError.value = null
         _stockAnalyzeAiLoadingDim.value = null
+        _stockAnalyzeTicksLoading.value = false
         _stockSearchQuery.value = ""
         _stockSearchHits.value = emptyList()
     }
@@ -153,23 +159,64 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
 
     fun loadStockAnalyze(symbol: String) {
         stockAnalyzeAiJob?.cancel()
+        stockAnalyzeTicksJob?.cancel()
         _stockAnalyzeAiLoadingDim.value = null
+        _stockAnalyzeTicksLoading.value = false
         viewModelScope.launch {
             _stockAnalyzeLoading.value = true
             _stockAnalyzeError.value = null
             _stockAnalyze.value = null
             runCatching {
                 val api = ApiClient.create(prefs.configFlow.first())
-                val out = api.stockAnalyze(symbol)
+                // 默认不拉实时成交明细，先秒出报价/短线/基本面
+                val out = api.stockAnalyze(symbol, liveTicks = false)
                 _stockAnalyze.value = out
                 analyzeHistory.remember(
                     symbol = out.symbol.ifBlank { symbol },
                     name = out.name,
                 )
+                if (out.detailStatus == "pending") {
+                    loadStockAnalyzeTicks(out.symbol.ifBlank { symbol })
+                }
             }.onFailure {
                 _stockAnalyzeError.value = it.message ?: "分析失败"
             }
             _stockAnalyzeLoading.value = false
+        }
+    }
+
+    /** 后台补全东财/腾讯成交明细。 */
+    fun loadStockAnalyzeTicks(symbol: String) {
+        stockAnalyzeTicksJob?.cancel()
+        stockAnalyzeTicksJob = viewModelScope.launch {
+            _stockAnalyzeTicksLoading.value = true
+            runCatching {
+                val api = ApiClient.create(prefs.configFlow.first())
+                val ticks = api.stockAnalyzeTicks(symbol)
+                _stockAnalyze.update { prev ->
+                    if (prev == null) {
+                        prev
+                    } else if (prev.symbol != symbol && prev.symbol != ticks.symbol) {
+                        prev
+                    } else {
+                        prev.copy(
+                            tradeDate = ticks.tradeDate.ifBlank { prev.tradeDate },
+                            detailSource = ticks.detailSource,
+                            detailLastTime = ticks.detailLastTime,
+                            detailTickCount = ticks.detailTickCount,
+                            detailUpdatedAt = ticks.detailUpdatedAt,
+                            detailStatus = ticks.detailStatus,
+                            detailSummary = ticks.detailSummary,
+                        )
+                    }
+                }
+            }.onFailure {
+                _stockAnalyze.update { prev ->
+                    if (prev == null || (prev.symbol != symbol && prev.symbol.isNotBlank())) prev
+                    else prev.copy(detailStatus = "empty")
+                }
+            }
+            _stockAnalyzeTicksLoading.value = false
         }
     }
 
