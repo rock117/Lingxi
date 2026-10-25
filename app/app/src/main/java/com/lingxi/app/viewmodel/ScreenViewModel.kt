@@ -8,6 +8,7 @@ import com.lingxi.app.data.model.Condition
 import com.lingxi.app.data.model.CreateConditionRequest
 import com.lingxi.app.data.model.ScreenRequest
 import com.lingxi.app.data.model.ScreenResult
+import com.lingxi.app.data.model.DimAi
 import com.lingxi.app.data.model.StockAnalyze
 import com.lingxi.app.data.model.StockDetail
 import com.lingxi.app.data.model.StockSearchHit
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -72,6 +74,10 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
     private val _stockAnalyzeError = MutableStateFlow<String?>(null)
     val stockAnalyzeError: StateFlow<String?> = _stockAnalyzeError.asStateFlow()
 
+    /** 当前正在请求的 AI 维：tape / short_term / fundamentals / statements */
+    private val _stockAnalyzeAiLoadingDim = MutableStateFlow<String?>(null)
+    val stockAnalyzeAiLoadingDim: StateFlow<String?> = _stockAnalyzeAiLoadingDim.asStateFlow()
+
     private val _stockSearchQuery = MutableStateFlow("")
     val stockSearchQuery: StateFlow<String> = _stockSearchQuery.asStateFlow()
 
@@ -82,6 +88,7 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
     val stockSearchLoading: StateFlow<Boolean> = _stockSearchLoading.asStateFlow()
 
     private var stockSearchJob: Job? = null
+    private var stockAnalyzeAiJob: Job? = null
 
     init {
         refresh()
@@ -93,8 +100,10 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun clearStockAnalyze() {
+        stockAnalyzeAiJob?.cancel()
         _stockAnalyze.value = null
         _stockAnalyzeError.value = null
+        _stockAnalyzeAiLoadingDim.value = null
         _stockSearchQuery.value = ""
         _stockSearchHits.value = emptyList()
     }
@@ -137,6 +146,8 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun loadStockAnalyze(symbol: String) {
+        stockAnalyzeAiJob?.cancel()
+        _stockAnalyzeAiLoadingDim.value = null
         viewModelScope.launch {
             _stockAnalyzeLoading.value = true
             _stockAnalyzeError.value = null
@@ -148,6 +159,77 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
                 _stockAnalyzeError.value = it.message ?: "分析失败"
             }
             _stockAnalyzeLoading.value = false
+        }
+    }
+
+    /**
+     * 按 Tab 懒加载单维 AI。已 ready 且非 force 则跳过。
+     * @param dim tape | short_term | fundamentals | statements
+     */
+    fun loadStockAnalyzeAi(symbol: String, dim: String, force: Boolean = false) {
+        val cur = _stockAnalyze.value
+        if (cur == null || cur.symbol != symbol) return
+        if (!force && dimAiOf(cur, dim).status == "ready") return
+        if (!force && !cur.aiEnabled) return
+
+        stockAnalyzeAiJob?.cancel()
+        stockAnalyzeAiJob = viewModelScope.launch {
+            _stockAnalyzeAiLoadingDim.value = dim
+            runCatching {
+                val api = ApiClient.create(prefs.configFlow.first())
+                val out = api.stockAnalyzeAi(symbol, dim, force)
+                _stockAnalyze.update { prev ->
+                    if (prev == null || prev.symbol != symbol) prev
+                    else mergeDimAi(prev, out.dim, out.ai, out.aiModel)
+                }
+            }.onFailure { e ->
+                val err = DimAi(
+                    status = "error",
+                    text = e.message ?: "AI 请求失败",
+                    bias = "unknown",
+                    confidence = "unknown",
+                )
+                _stockAnalyze.update { prev ->
+                    if (prev == null || prev.symbol != symbol) prev
+                    else mergeDimAi(prev, dim, err, prev.aiModel)
+                }
+            }
+            if (_stockAnalyzeAiLoadingDim.value == dim) {
+                _stockAnalyzeAiLoadingDim.value = null
+            }
+        }
+    }
+
+    private fun dimAiOf(a: StockAnalyze, dim: String): DimAi = when (dim) {
+        "tape" -> a.ai
+        "short_term" -> a.shortTerm.ai
+        "fundamentals" -> a.fundamentals.ai
+        "statements" -> a.statements.ai
+        else -> DimAi()
+    }
+
+    private fun mergeDimAi(
+        prev: StockAnalyze,
+        dim: String,
+        ai: DimAi,
+        aiModel: String?,
+    ): StockAnalyze {
+        val model = aiModel ?: prev.aiModel
+        return when (dim) {
+            "tape" -> prev.copy(ai = ai, analysis = ai.text, aiModel = model)
+            "short_term" -> prev.copy(
+                shortTerm = prev.shortTerm.copy(ai = ai),
+                aiModel = model,
+            )
+            "fundamentals" -> prev.copy(
+                fundamentals = prev.fundamentals.copy(ai = ai),
+                aiModel = model,
+            )
+            "statements" -> prev.copy(
+                statements = prev.statements.copy(ai = ai),
+                aiModel = model,
+            )
+            else -> prev
         }
     }
 

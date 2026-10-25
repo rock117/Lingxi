@@ -196,7 +196,7 @@ impl AiClient {
     }
 }
 
-fn strip_code_fence(s: &str) -> String {
+pub(crate) fn strip_code_fence(s: &str) -> String {
     let t = s.trim();
     if let Some(rest) = t.strip_prefix("```json") {
         return rest

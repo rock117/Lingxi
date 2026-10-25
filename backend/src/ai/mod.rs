@@ -4,7 +4,7 @@
 //! 供推送/任务等模块按需调用；未接线前允许 dead_code。
 
 #[allow(dead_code)]
-mod client;
+pub(crate) mod client;
 pub mod prompts;
 
 #[allow(unused_imports)] // 供其它 crate 模块 `use crate::ai::…`

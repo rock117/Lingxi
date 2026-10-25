@@ -166,6 +166,7 @@ async fn rocket() -> _ {
                 market::routes::stock_detail,
                 market::routes::stocks_search,
                 market::routes::stock_analyze_query,
+                market::routes::stock_analyze_ai_query,
                 market::routes::fund_stats_meta,
                 market::routes::fund_stats_query,
                 ws::ws_handler,

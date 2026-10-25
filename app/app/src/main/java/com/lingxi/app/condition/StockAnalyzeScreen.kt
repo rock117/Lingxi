@@ -5,6 +5,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -62,6 +64,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lingxi.app.data.model.BalancePeriodRow
 import com.lingxi.app.data.model.CashflowPeriodRow
+import com.lingxi.app.data.model.DetailSummary
+import com.lingxi.app.data.model.DimAi
 import com.lingxi.app.data.model.FundamentalsDim
 import com.lingxi.app.data.model.IncomePeriodRow
 import com.lingxi.app.data.model.ShortTermDim
@@ -74,11 +78,11 @@ import com.lingxi.app.ui.QuoteColors
 import com.lingxi.app.viewmodel.ScreenViewModel
 import java.util.Locale
 
-private enum class AnalyzeDim(val label: String) {
-    Tape("盘面"),
-    ShortTerm("短线走势"),
-    Fundament("基本面"),
-    Statements("财务报表"),
+private enum class AnalyzeDim(val label: String, val apiKey: String) {
+    Tape("盘面", "tape"),
+    ShortTerm("短线走势", "short_term"),
+    Fundament("基本面", "fundamentals"),
+    Statements("财务报表", "statements"),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -94,6 +98,7 @@ fun StockAnalyzeScreen(
     val result by viewModel.stockAnalyze.collectAsStateWithLifecycle()
     val loading by viewModel.stockAnalyzeLoading.collectAsStateWithLifecycle()
     val error by viewModel.stockAnalyzeError.collectAsStateWithLifecycle()
+    val aiLoadingDim by viewModel.stockAnalyzeAiLoadingDim.collectAsStateWithLifecycle()
     val query by viewModel.stockSearchQuery.collectAsStateWithLifecycle()
     val hits by viewModel.stockSearchHits.collectAsStateWithLifecycle()
     val searchLoading by viewModel.stockSearchLoading.collectAsStateWithLifecycle()
@@ -118,6 +123,14 @@ fun StockAnalyzeScreen(
         val r = result ?: return@LaunchedEffect
         if (r.symbol.isNotBlank()) selectedSymbol = r.symbol
         if (r.name.isNotBlank()) selectedName = r.name
+    }
+
+    // 切换 Tab 或事实就绪后，懒加载当前维 AI
+    LaunchedEffect(result?.symbol, result?.aiEnabled, dimTab) {
+        val r = result ?: return@LaunchedEffect
+        if (r.symbol.isBlank() || !r.aiEnabled) return@LaunchedEffect
+        val dim = AnalyzeDim.entries[dimTab.coerceIn(0, AnalyzeDim.entries.lastIndex)]
+        viewModel.loadStockAnalyzeAi(r.symbol, dim.apiKey)
     }
 
     val displayName = selectedName
@@ -257,36 +270,49 @@ fun StockAnalyzeScreen(
                 }
                 hasStock && result != null -> {
                     val r = result!!
-                    // 完整报价随 Tab 内容滚动，不再钉在顶区
-                    when (AnalyzeDim.entries[dimTab.coerceIn(0, AnalyzeDim.entries.lastIndex)]) {
+                    val dim = AnalyzeDim.entries[dimTab.coerceIn(0, AnalyzeDim.entries.lastIndex)]
+                    val aiBusy = aiLoadingDim == dim.apiKey
+                    when (dim) {
                         AnalyzeDim.Tape -> TapeTabContent(
                             result = r,
-                            loading = loading,
+                            aiLoading = aiBusy,
                             quote = r.quote,
+                            onRetryAi = {
+                                viewModel.loadStockAnalyzeAi(r.symbol, dim.apiKey, force = true)
+                            },
                             modifier = Modifier.weight(1f),
                         )
                         AnalyzeDim.ShortTerm -> ShortTermTabContent(
                             dim = r.shortTerm,
                             aiEnabled = r.aiEnabled,
                             aiModel = r.aiModel,
-                            loading = loading,
+                            aiLoading = aiBusy,
                             quote = r.quote,
+                            onRetryAi = {
+                                viewModel.loadStockAnalyzeAi(r.symbol, dim.apiKey, force = true)
+                            },
                             modifier = Modifier.weight(1f),
                         )
                         AnalyzeDim.Fundament -> FundamentalsTabContent(
                             dim = r.fundamentals,
                             aiEnabled = r.aiEnabled,
                             aiModel = r.aiModel,
-                            loading = loading,
+                            aiLoading = aiBusy,
                             quote = r.quote,
+                            onRetryAi = {
+                                viewModel.loadStockAnalyzeAi(r.symbol, dim.apiKey, force = true)
+                            },
                             modifier = Modifier.weight(1f),
                         )
                         AnalyzeDim.Statements -> StatementsTabContent(
                             dim = r.statements,
                             aiEnabled = r.aiEnabled,
                             aiModel = r.aiModel,
-                            loading = loading,
+                            aiLoading = aiBusy,
                             quote = r.quote,
+                            onRetryAi = {
+                                viewModel.loadStockAnalyzeAi(r.symbol, dim.apiKey, force = true)
+                            },
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -453,8 +479,9 @@ private fun CompactStockChrome(
 @Composable
 private fun TapeTabContent(
     result: StockAnalyze,
-    loading: Boolean,
+    aiLoading: Boolean,
     quote: StockAnalyzeQuote? = null,
+    onRetryAi: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -474,12 +501,15 @@ private fun TapeTabContent(
                 updatedAt = result.detailUpdatedAt,
             )
         }
+        item { DetailSummaryPanel(result.detailSummary) }
         item {
             AnalysisPanel(
-                analysis = result.analysis,
+                title = "盘面 AI",
+                ai = result.ai,
                 aiEnabled = result.aiEnabled,
                 aiModel = result.aiModel,
-                loading = loading,
+                loading = aiLoading,
+                onRetry = onRetryAi,
             )
         }
         if (result.bars.isNotEmpty()) {
@@ -519,8 +549,9 @@ private fun ShortTermTabContent(
     dim: ShortTermDim,
     aiEnabled: Boolean,
     aiModel: String?,
-    loading: Boolean,
+    aiLoading: Boolean,
     quote: StockAnalyzeQuote? = null,
+    onRetryAi: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -556,18 +587,25 @@ private fun ShortTermTabContent(
                             "额/5日均" to (dim.amountVs5dAvg?.let {
                                 String.format(Locale.US, "%.2fx", it)
                             } ?: "—"),
+                            "距MA5" to formatOptPct(dim.priceVsMa5Pct),
+                            "量能" to dim.volumeLabel,
                         ),
                     )
+                    if (dim.labels.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        FlagChips(dim.labels)
+                    }
                 }
             }
         }
         item {
             AnalysisPanel(
                 title = "短线 AI",
-                analysis = dim.analysis,
+                ai = dim.ai,
                 aiEnabled = aiEnabled,
                 aiModel = aiModel,
-                loading = loading,
+                loading = aiLoading,
+                onRetry = onRetryAi,
             )
         }
         if (dim.bars.isNotEmpty()) {
@@ -606,8 +644,9 @@ private fun FundamentalsTabContent(
     dim: FundamentalsDim,
     aiEnabled: Boolean,
     aiModel: String?,
-    loading: Boolean,
+    aiLoading: Boolean,
     quote: StockAnalyzeQuote? = null,
+    onRetryAi: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -665,18 +704,29 @@ private fun FundamentalsTabContent(
                             "总资产" to formatOptMoney(dim.totalAssets),
                             "总负债" to formatOptMoney(dim.totalLiabilities),
                             "净资产" to formatOptMoney(dim.totalEquity),
+                            "现金流/净利" to (dim.ocfVsNp?.let {
+                                String.format(Locale.US, "%.2fx", it)
+                            } ?: "—"),
+                            "资产负债率" to (dim.liabilityRatio?.let {
+                                String.format(Locale.US, "%.1f%%", it * 100)
+                            } ?: "—"),
                         ),
                     )
+                    if (dim.qualityFlags.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        FlagChips(dim.qualityFlags)
+                    }
                 }
             }
         }
         item {
             AnalysisPanel(
                 title = "基本面 AI",
-                analysis = dim.analysis,
+                ai = dim.ai,
                 aiEnabled = aiEnabled,
                 aiModel = aiModel,
-                loading = loading,
+                loading = aiLoading,
+                onRetry = onRetryAi,
             )
         }
     }
@@ -687,8 +737,9 @@ private fun StatementsTabContent(
     dim: StatementsDim,
     aiEnabled: Boolean,
     aiModel: String?,
-    loading: Boolean,
+    aiLoading: Boolean,
     quote: StockAnalyzeQuote? = null,
+    onRetryAi: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -699,13 +750,34 @@ private fun StatementsTabContent(
         if (quote != null) {
             item { DayQuotePanel(quote) }
         }
+        if (dim.trendFlags.isNotEmpty()) {
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 1.dp,
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "趋势标签",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        FlagChips(dim.trendFlags)
+                    }
+                }
+            }
+        }
         item {
             AnalysisPanel(
                 title = "财报 AI",
-                analysis = dim.analysis,
+                ai = dim.ai,
                 aiEnabled = aiEnabled,
                 aiModel = aiModel,
-                loading = loading,
+                loading = aiLoading,
+                onRetry = onRetryAi,
             )
         }
         if (dim.income.isNotEmpty()) {
@@ -1159,13 +1231,90 @@ private fun MetaGrid(pairs: List<Pair<String, String>>) {
 }
 
 @Composable
+private fun DetailSummaryPanel(s: DetailSummary) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp,
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "盘面摘要",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            QuoteGrid(
+                listOf(
+                    "买盘占比" to (s.buyRatio?.let { String.format(Locale.US, "%.0f%%", it * 100) } ?: "—"),
+                    "卖盘占比" to (s.sellRatio?.let { String.format(Locale.US, "%.0f%%", it * 100) } ?: "—"),
+                    "VWAP" to (s.vwapEst?.let { formatAnalyzePrice(it) } ?: "—"),
+                    "价相对VWAP" to formatOptPct(s.priceVsVwapPct),
+                    "大单净手数" to String.format(Locale.US, "%.0f", s.largeNetLots),
+                    "大买后跟价" to formatOptPct(s.largeBuyFollowPct),
+                    "开盘买/卖" to String.format(Locale.US, "%.0f/%.0f", s.openBuyLots, s.openSellLots),
+                    "尾盘买/卖" to String.format(Locale.US, "%.0f/%.0f", s.closeBuyLots, s.closeSellLots),
+                ),
+            )
+            if (s.labels.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                FlagChips(s.labels)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FlagChips(flags: List<String>) {
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        flags.take(6).forEach { flag ->
+            Text(
+                flag,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
+    }
+}
+
+@Composable
 private fun AnalysisPanel(
-    analysis: String,
+    ai: DimAi,
     aiEnabled: Boolean,
     aiModel: String?,
     loading: Boolean,
     title: String = "盘面 AI",
+    onRetry: () -> Unit = {},
 ) {
+    val biasLabel = when (ai.bias) {
+        "bullish" -> "偏多"
+        "bearish" -> "偏空"
+        "neutral" -> "中性"
+        else -> null
+    }
+    val confLabel = when (ai.confidence) {
+        "high" -> "高置信"
+        "medium" -> "中置信"
+        "low" -> "低置信"
+        else -> null
+    }
+    val body = when {
+        loading && ai.text.isBlank() -> "正在生成解读…"
+        ai.status == "pending" && aiEnabled -> "准备生成解读…"
+        ai.status == "disabled" -> ai.text.ifBlank { "AI 未启用" }
+        ai.status == "error" -> ai.text.ifBlank { "AI 失败" }
+        else -> ai.text.ifBlank { "暂无分析内容" }
+    }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -1199,13 +1348,51 @@ private fun AnalysisPanel(
                     )
                 }
             }
+            if (biasLabel != null || confLabel != null || ai.flags.isNotEmpty()) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    biasLabel?.let {
+                        val c = when (ai.bias) {
+                            "bullish" -> QuoteColors.Up
+                            "bearish" -> QuoteColors.Down
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = c,
+                        )
+                    }
+                    confLabel?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (ai.flags.isNotEmpty()) {
+                    FlagChips(ai.flags)
+                }
+            }
             HorizontalDivider(
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
             )
             Text(
-                analysis.ifBlank { "暂无分析内容" },
+                body,
                 style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
             )
+            if (ai.status == "error" || (ai.status == "ready" && aiEnabled)) {
+                Text(
+                    if (ai.status == "error") "重试" else "重新生成",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable(enabled = !loading, onClick = onRetry),
+                )
+            }
         }
     }
 }

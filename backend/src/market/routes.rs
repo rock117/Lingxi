@@ -29,7 +29,7 @@ use super::fund_stats::{self as fund_stats_svc, FundStatsMeta, FundStatsResult};
 use super::fundamentals;
 use super::screen::{self, ScreenExpression, ScreenResult, StrategyDef};
 use super::session;
-use super::stock_analyze::{self as stock_analyze_svc, StockAnalyzeOut};
+use super::stock_analyze::{self as stock_analyze_svc, StockAnalyzeAiOut, StockAnalyzeOut};
 use super::tencent::TencentClient;
 
 /// MTT 需要至少 MA60 + 斜率回看，默认取最近 70 个交易日。
@@ -305,7 +305,7 @@ pub async fn stocks_search(
     }))
 }
 
-/// `GET /api/market/stock/analyze?symbol=600519.SH` — 近5日K线 + 成交明细 + AI 分析。
+/// `GET /api/market/stock/analyze?symbol=600519.SH` — 事实数据（K/明细/指标）；AI 为 pending，需另调 `/analyze/ai`。
 #[get("/api/market/stock/analyze?<symbol>")]
 pub async fn stock_analyze_query(
     db: &rocket::State<DatabaseConnection>,
@@ -320,6 +320,36 @@ pub async fn stock_analyze_query(
         tencent.inner(),
         ai.inner(),
         symbol,
+    )
+    .await
+    .map_err(AppError::Internal)?;
+    Ok(Json(out))
+}
+
+/// `GET /api/market/stock/analyze/ai?symbol=600519.SH&dim=tape` — 单维 AI（tape/short_term/fundamentals/statements）。
+#[get("/api/market/stock/analyze/ai?<symbol>&<dim>&<force>")]
+pub async fn stock_analyze_ai_query(
+    db: &rocket::State<DatabaseConnection>,
+    eastmoney: &rocket::State<EastmoneyClient>,
+    tencent: &rocket::State<TencentClient>,
+    ai: &rocket::State<AiClient>,
+    symbol: &str,
+    dim: &str,
+    force: Option<bool>,
+) -> AppResult<Json<StockAnalyzeAiOut>> {
+    let kind = stock_analyze_svc::AnalyzeDimKind::parse(dim).ok_or_else(|| {
+        AppError::BadRequest(
+            "dim 须为 tape | short_term | fundamentals | statements".into(),
+        )
+    })?;
+    let out = stock_analyze_svc::analyze_dim(
+        db.inner(),
+        eastmoney.inner(),
+        tencent.inner(),
+        ai.inner(),
+        symbol,
+        kind,
+        force.unwrap_or(false),
     )
     .await
     .map_err(AppError::Internal)?;

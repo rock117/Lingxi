@@ -1,8 +1,8 @@
 # Lingxi AI 能力设计
 
 > **本文档为设计规范（Source of Truth）。** 算法/边界变更先改文档再改代码。  
-> 状态：**Backend `AiClient` + 个股分析 HTTP；App「分析个股」页已接入。**  
-> 关联：`docs/screen.md`、`docs/fund_stats.md`、`docs/market_sentiment.md`、`docs/mid_term_trend.md`。
+> 状态：**Backend `AiClient` + 个股分析（事实 API + 分维 AI）；App「分析」Tab 已接入。**  
+> 关联：`docs/screen.md`、`docs/fund_stats.md`、`docs/market_sentiment.md`、`docs/mid_term_trend.md`、`docs/api_auth.md`（对外 API Key，与本文件的 `AI_API_KEY` 不同）。
 
 ---
 
@@ -82,47 +82,42 @@ backend/src/market/
 
 ### 4.1 HTTP
 
-`GET /api/market/stock/analyze?symbol=600519.SH`
+**事实（快）：** `GET /api/market/stock/analyze?symbol=600519.SH`  
+只拉 K/明细/估值/财报并算确定性标签；各维 `ai.status=pending`（或 AI 关闭时为 `disabled`），**不调大模型**。
 
-响应字段（节选）：
+**分维 AI（懒加载）：** `GET /api/market/stock/analyze/ai?symbol=…&dim=tape|short_term|fundamentals|statements&force=0`  
+- 复用进程内事实缓存（约 3 分钟）；AI 结果缓存约 30 分钟（同 symbol+trade_date+dim）。  
+- `force=1` 跳过 AI 缓存重生成。  
+- 返回 `{ dim, ai: { status, text, bias, confidence, flags }, cached, … }`。
+
+事实响应字段（节选）：
 
 | 字段 | 说明 |
 |---|---|
-| `trade_date` | 成交明细所用交易日（非开市日则为最近开市日） |
-| `detail_source` | `eastmoney` / `tencent` = 实时拉取（不入库）；`db` = 库内快照 |
-| `detail_last_time` | 明细最新一笔时间，如 `2026-10-24 14:59:57`；无则 null |
-| `detail_tick_count` | 笔数 |
-| `detail_updated_at` | 仅 `db` 时有库快照时间 |
-| `bars` | 近约 5 个交易日日 K |
-| `analysis` | AI 正文；未启用或失败时为说明文案 |
-| `ai_enabled` / `ai_model` | 是否启用及模型名 |
+| `trade_date` / `detail_*` | 成交明细交易日与来源 |
+| `quote` / `bars` | 报价与近 5 日 K |
+| `detail_summary` | 买卖比、VWAP、分时段、大单跟价、`labels` |
+| `ai` / `short_term` / `fundamentals` / `statements` | 各维事实 + `ai` 结构；顶栏 `analysis` 与盘面 `ai.text` 同步（兼容） |
+| `ai_enabled` / `ai_model` | 是否配置了上游 Key |
 
-### 4.2 成交明细
+`DimAi`：`status`=`pending|ready|disabled|error`；`bias`=`bullish|neutral|bearish|unknown`；`confidence`=`high|medium|low|unknown`；`flags` 短标签。
 
-- 数据源顺序：**东财** `details/get`（`pos` 随机 ∈ `[-13787,-5031]`，UA 轮换）→ 失败则 **腾讯** `stock.gtimg.cn` 当日翻页（见 `free-tick-apis.md` §2）→ 再失败读库（只读，本接口不再写入）。  
-- 腾讯仅沪深当日；北交所无腾讯回退。腾讯行归一为东财格式后仅用于本次分析。  
-- 每行：`时间,价格,手数,方向(1买/2卖/4中性),笔序`。  
-- `detail_source`：`eastmoney` / `tencent` / `db`。  
-- 交易日：`sc_trade_calendar` 中 `is_open` 且 `≤` 上海今日的最近一日。  
-- 送给 AI 的是**摘要**（买卖手数、VWAP、高低、大单、尾盘样本），不是全量 tick。
+模型须输出 JSON（见 `backend/config/ai_prompts.toml`）；解析失败时降级为纯文本 + `bias=unknown`。
+
+### 4.2 成交明细与确定性指标
+
+- 数据源顺序：**东财** → **腾讯** → 库（只读，本接口不写库）。  
+- 交易日：`sc_trade_calendar` 最近开市日。  
+- 盘面摘要含：买卖占比、价相对 VWAP、开盘/尾盘买卖、大单净额、大单后约 5 笔跟价%、`labels`。  
+- 短线：MA 排列、价距 MA%、近 20 日高低、量能标签。  
+- 基本面：`ocf_vs_np`、资产负债率、`quality_flags`。  
+- 财报：`trend_flags`（营收/净利环比、现金含量等）。
 
 ### 4.3 App
 
-- 首页底部 Tab **「分析」**：独立入口，可按 **代码 / 名称 / 拼音首字母** 搜索选股。  
-- 搜索接口：`GET /api/market/stocks/search?q=`（读 `sc_stock`，含 `name_pinyin`）。  
-- 个股详情「AI 分析个股」仍可跳转同一分析页（带初始 symbol）。  
-
-**页面结构（个股综合研判）：**
-
-| 区域 | 内容 |
-|---|---|
-| 顶区固定 | 搜索、名称/代码、当日报价、刷新 |
-| Tab「盘面」 | 成交明细摘要、盘面 AI、近 5 日 K |
-| Tab「短线走势」 | 5/10/20 日涨跌、MA5/10/20、额比、近 20 日 K + 短线 AI |
-| Tab「基本面」 | PE/PB/市值、营收净利与同比、现金流/资产负债摘要 + 基本面 AI |
-| Tab「财务报表」 | 近几期利润/现金流/资产负债表 + 财报 AI |
-
-一次请求返回四维事实；AI **四套独立 system 提示词**（见 `backend/config/ai_prompts.toml` 的 `stock_analyze.*`），并行调用后分别填入各 Tab。改提示词后重启 backend 即可，无需改代码。
+- 首页 Tab **「分析」**：先拉事实，**切到某维 Tab 再请求该维 AI**；可「重新生成」。  
+- UI：偏多/偏空色标、置信度、flags 芯片；完整报价随列表滚动。  
+- 搜索：`GET /api/market/stocks/search`。
 
 ---
 
@@ -142,9 +137,9 @@ backend/src/market/
 
 | 项 | 说明 |
 |---|---|
+| 行业/历史估值分位 | 给基本面 AI 估值锚（需库内同业数据） |
 | `POST /api/ai/explain` 等 | 对 App 开放通用 AI 时再加 |
-| App「解释一下 / AI 写策略」 | UI 另开需求 |
-| Tool calling 多轮 | 首期仍是「先算数再 chat」 |
+| Tool calling 多轮 | 仍保持「先算数再 chat」 |
 
 ---
 
