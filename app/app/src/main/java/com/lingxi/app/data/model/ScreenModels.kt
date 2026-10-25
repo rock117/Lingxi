@@ -185,9 +185,13 @@ data class IncomePeriodRow(
     @SerialName("report_date") val reportDate: String = "",
     @SerialName("fiscal_period") val fiscalPeriod: String? = null,
     val revenue: Double? = null,
+    @SerialName("revenue_yoy") val revenueYoy: Double? = null,
     @SerialName("parent_np") val parentNp: Double? = null,
+    @SerialName("parent_np_yoy") val parentNpYoy: Double? = null,
     @SerialName("deduct_np") val deductNp: Double? = null,
+    @SerialName("deduct_np_yoy") val deductNpYoy: Double? = null,
     val rd: Double? = null,
+    @SerialName("rd_yoy") val rdYoy: Double? = null,
 )
 
 @Serializable
@@ -195,8 +199,11 @@ data class CashflowPeriodRow(
     @SerialName("report_date") val reportDate: String = "",
     @SerialName("fiscal_period") val fiscalPeriod: String? = null,
     val operating: Double? = null,
+    @SerialName("operating_yoy") val operatingYoy: Double? = null,
     val investing: Double? = null,
+    @SerialName("investing_yoy") val investingYoy: Double? = null,
     val financing: Double? = null,
+    @SerialName("financing_yoy") val financingYoy: Double? = null,
 )
 
 @Serializable
@@ -204,9 +211,13 @@ data class BalancePeriodRow(
     @SerialName("report_date") val reportDate: String = "",
     @SerialName("fiscal_period") val fiscalPeriod: String? = null,
     @SerialName("total_assets") val totalAssets: Double? = null,
+    @SerialName("total_assets_yoy") val totalAssetsYoy: Double? = null,
     @SerialName("total_liabilities") val totalLiabilities: Double? = null,
+    @SerialName("total_liabilities_yoy") val totalLiabilitiesYoy: Double? = null,
     @SerialName("total_equity") val totalEquity: Double? = null,
+    @SerialName("total_equity_yoy") val totalEquityYoy: Double? = null,
     val receivable: Double? = null,
+    @SerialName("receivable_yoy") val receivableYoy: Double? = null,
 )
 
 @Serializable

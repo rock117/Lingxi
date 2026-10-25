@@ -309,15 +309,19 @@ fn pct_change(curr: Option<f64>, prev: Option<f64>) -> Option<f64> {
     Some((c - p) / p.abs() * 100.0)
 }
 
-/// 单票最近若干期利润表关键指标（报告期降序）。
+/// 单票最近若干期利润表关键指标（报告期降序；同比相对同 fiscal_period 上一期）。
 #[derive(Debug, Clone, Serialize)]
 pub struct IncomePeriodRow {
     pub report_date: String,
     pub fiscal_period: Option<String>,
     pub revenue: Option<f64>,
+    pub revenue_yoy: Option<f64>,
     pub parent_np: Option<f64>,
+    pub parent_np_yoy: Option<f64>,
     pub deduct_np: Option<f64>,
+    pub deduct_np_yoy: Option<f64>,
     pub rd: Option<f64>,
+    pub rd_yoy: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -325,8 +329,11 @@ pub struct CashflowPeriodRow {
     pub report_date: String,
     pub fiscal_period: Option<String>,
     pub operating: Option<f64>,
+    pub operating_yoy: Option<f64>,
     pub investing: Option<f64>,
+    pub investing_yoy: Option<f64>,
     pub financing: Option<f64>,
+    pub financing_yoy: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -334,9 +341,13 @@ pub struct BalancePeriodRow {
     pub report_date: String,
     pub fiscal_period: Option<String>,
     pub total_assets: Option<f64>,
+    pub total_assets_yoy: Option<f64>,
     pub total_liabilities: Option<f64>,
+    pub total_liabilities_yoy: Option<f64>,
     pub total_equity: Option<f64>,
+    pub total_equity_yoy: Option<f64>,
     pub receivable: Option<f64>,
+    pub receivable_yoy: Option<f64>,
 }
 
 /// 单票最新一期基本面快照（含同比）。
@@ -437,8 +448,10 @@ pub async fn load_symbol_income_periods(
     symbol: &str,
     limit: u32,
 ) -> Result<Vec<IncomePeriodRow>, sea_orm::DbErr> {
-    let rows = load_symbol_fund_rows(db, "sc_stock_income_statement", symbol, limit).await?;
-    Ok(rows
+    // 多取几期以便算同比（同 fiscal_period 上年）
+    let fetch = limit.saturating_add(4).clamp(1, 16);
+    let rows = load_symbol_fund_rows(db, "sc_stock_income_statement", symbol, fetch).await?;
+    let mut out: Vec<IncomePeriodRow> = rows
         .into_iter()
         .map(|r| {
             let (rev, np, ded, rd) = extract_income(&r.payload);
@@ -446,12 +459,19 @@ pub async fn load_symbol_income_periods(
                 report_date: r.report_date.format("%Y-%m-%d").to_string(),
                 fiscal_period: r.fiscal_period,
                 revenue: rev,
+                revenue_yoy: None,
                 parent_np: np,
+                parent_np_yoy: None,
                 deduct_np: ded,
+                deduct_np_yoy: None,
                 rd,
+                rd_yoy: None,
             }
         })
-        .collect())
+        .collect();
+    fill_income_yoy(&mut out);
+    out.truncate(limit.clamp(1, 16) as usize);
+    Ok(out)
 }
 
 pub async fn load_symbol_cashflow_periods(
@@ -459,8 +479,9 @@ pub async fn load_symbol_cashflow_periods(
     symbol: &str,
     limit: u32,
 ) -> Result<Vec<CashflowPeriodRow>, sea_orm::DbErr> {
-    let rows = load_symbol_fund_rows(db, "sc_stock_cashflow_statement", symbol, limit).await?;
-    Ok(rows
+    let fetch = limit.saturating_add(4).clamp(1, 16);
+    let rows = load_symbol_fund_rows(db, "sc_stock_cashflow_statement", symbol, fetch).await?;
+    let mut out: Vec<CashflowPeriodRow> = rows
         .into_iter()
         .map(|r| {
             let (op, inv, fin, _) = extract_cashflow(&r.payload);
@@ -468,11 +489,17 @@ pub async fn load_symbol_cashflow_periods(
                 report_date: r.report_date.format("%Y-%m-%d").to_string(),
                 fiscal_period: r.fiscal_period,
                 operating: op,
+                operating_yoy: None,
                 investing: inv,
+                investing_yoy: None,
                 financing: fin,
+                financing_yoy: None,
             }
         })
-        .collect())
+        .collect();
+    fill_cashflow_yoy(&mut out);
+    out.truncate(limit.clamp(1, 16) as usize);
+    Ok(out)
 }
 
 pub async fn load_symbol_balance_periods(
@@ -480,8 +507,9 @@ pub async fn load_symbol_balance_periods(
     symbol: &str,
     limit: u32,
 ) -> Result<Vec<BalancePeriodRow>, sea_orm::DbErr> {
-    let rows = load_symbol_fund_rows(db, "sc_stock_balance_sheet", symbol, limit).await?;
-    Ok(rows
+    let fetch = limit.saturating_add(4).clamp(1, 16);
+    let rows = load_symbol_fund_rows(db, "sc_stock_balance_sheet", symbol, fetch).await?;
+    let mut out: Vec<BalancePeriodRow> = rows
         .into_iter()
         .map(|r| {
             let (ar, _, _, _) = extract_balance(&r.payload);
@@ -489,18 +517,80 @@ pub async fn load_symbol_balance_periods(
                 report_date: r.report_date.format("%Y-%m-%d").to_string(),
                 fiscal_period: r.fiscal_period,
                 total_assets: json_f64(&r.payload, &["totalAssets", "total_assets"]),
+                total_assets_yoy: None,
                 total_liabilities: json_f64(&r.payload, &["totalLiabilities", "total_liabilities"]),
-                total_equity: json_f64(&r.payload, &["totalEquity", "total_equity"])
-                    .or_else(|| {
-                        json_f64(
-                            &r.payload,
-                            &["totalShareholdersEquity", "total_shareholders_equity"],
-                        )
-                    }),
+                total_liabilities_yoy: None,
+                total_equity: json_f64(&r.payload, &["totalEquity", "total_equity"]).or_else(|| {
+                    json_f64(
+                        &r.payload,
+                        &["totalShareholdersEquity", "total_shareholders_equity"],
+                    )
+                }),
+                total_equity_yoy: None,
                 receivable: ar,
+                receivable_yoy: None,
             }
         })
-        .collect())
+        .collect();
+    fill_balance_yoy(&mut out);
+    out.truncate(limit.clamp(1, 16) as usize);
+    Ok(out)
+}
+
+fn find_prior_same_period<'a, T>(
+    rows: &'a [T],
+    idx: usize,
+    period_of: impl Fn(&T) -> Option<&str>,
+) -> Option<&'a T> {
+    let cur_p = normalize_period(period_of(&rows[idx]));
+    rows.iter().skip(idx + 1).find(|p| normalize_period(period_of(p)) == cur_p)
+}
+
+fn fill_income_yoy(rows: &mut [IncomePeriodRow]) {
+    for i in 0..rows.len() {
+        let prior = find_prior_same_period(rows, i, |r| r.fiscal_period.as_deref())
+            .map(|p| (p.revenue, p.parent_np, p.deduct_np, p.rd));
+        let Some((pr, pn, pd, prd)) = prior else {
+            continue;
+        };
+        rows[i].revenue_yoy = pct_change(rows[i].revenue, pr);
+        rows[i].parent_np_yoy = pct_change(rows[i].parent_np, pn);
+        rows[i].deduct_np_yoy = pct_change(rows[i].deduct_np, pd);
+        rows[i].rd_yoy = pct_change(rows[i].rd, prd);
+    }
+}
+
+fn fill_cashflow_yoy(rows: &mut [CashflowPeriodRow]) {
+    for i in 0..rows.len() {
+        let prior = find_prior_same_period(rows, i, |r| r.fiscal_period.as_deref())
+            .map(|p| (p.operating, p.investing, p.financing));
+        let Some((po, pi, pf)) = prior else {
+            continue;
+        };
+        rows[i].operating_yoy = pct_change(rows[i].operating, po);
+        rows[i].investing_yoy = pct_change(rows[i].investing, pi);
+        rows[i].financing_yoy = pct_change(rows[i].financing, pf);
+    }
+}
+
+fn fill_balance_yoy(rows: &mut [BalancePeriodRow]) {
+    for i in 0..rows.len() {
+        let prior = find_prior_same_period(rows, i, |r| r.fiscal_period.as_deref()).map(|p| {
+            (
+                p.total_assets,
+                p.total_liabilities,
+                p.total_equity,
+                p.receivable,
+            )
+        });
+        let Some((pa, pl, pe, pr)) = prior else {
+            continue;
+        };
+        rows[i].total_assets_yoy = pct_change(rows[i].total_assets, pa);
+        rows[i].total_liabilities_yoy = pct_change(rows[i].total_liabilities, pl);
+        rows[i].total_equity_yoy = pct_change(rows[i].total_equity, pe);
+        rows[i].receivable_yoy = pct_change(rows[i].receivable, pr);
+    }
 }
 
 async fn load_symbol_fund_rows(

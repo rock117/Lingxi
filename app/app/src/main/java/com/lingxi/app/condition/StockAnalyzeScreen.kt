@@ -56,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
@@ -814,15 +815,15 @@ private fun StatementsTabContent(
             )
         }
         if (dim.income.isNotEmpty()) {
-            item { SectionTitle("利润表（近几期）") }
+            item { SectionTitle("利润表（近几期 · 亿/万元）") }
             item { IncomeTable(dim.income) }
         }
         if (dim.cashflow.isNotEmpty()) {
-            item { SectionTitle("现金流量表（近几期）") }
+            item { SectionTitle("现金流量表（近几期 · 亿/万元）") }
             item { CashflowTable(dim.cashflow) }
         }
         if (dim.balance.isNotEmpty()) {
-            item { SectionTitle("资产负债表（近几期）") }
+            item { SectionTitle("资产负债表（近几期 · 亿/万元）") }
             item { BalanceTable(dim.balance) }
         }
         if (dim.income.isEmpty() && dim.cashflow.isEmpty() && dim.balance.isEmpty()) {
@@ -853,12 +854,12 @@ private fun IncomeTable(rows: List<IncomePeriodRow>) {
         StatementHeader(listOf("报告期", "营收", "归母", "扣非"))
         rows.forEach { r ->
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-            StatementDataRow(
-                listOf(
-                    periodLabel(r.reportDate, r.fiscalPeriod),
-                    formatOptMoney(r.revenue),
-                    formatOptMoney(r.parentNp),
-                    formatOptMoney(r.deductNp),
+            StatementMetricRow(
+                period = periodLabel(r.reportDate, r.fiscalPeriod),
+                metrics = listOf(
+                    r.revenue to r.revenueYoy,
+                    r.parentNp to r.parentNpYoy,
+                    r.deductNp to r.deductNpYoy,
                 ),
             )
         }
@@ -871,12 +872,12 @@ private fun CashflowTable(rows: List<CashflowPeriodRow>) {
         StatementHeader(listOf("报告期", "经营", "投资", "筹资"))
         rows.forEach { r ->
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-            StatementDataRow(
-                listOf(
-                    periodLabel(r.reportDate, r.fiscalPeriod),
-                    formatOptMoney(r.operating),
-                    formatOptMoney(r.investing),
-                    formatOptMoney(r.financing),
+            StatementMetricRow(
+                period = periodLabel(r.reportDate, r.fiscalPeriod),
+                metrics = listOf(
+                    r.operating to r.operatingYoy,
+                    r.investing to r.investingYoy,
+                    r.financing to r.financingYoy,
                 ),
             )
         }
@@ -889,12 +890,12 @@ private fun BalanceTable(rows: List<BalancePeriodRow>) {
         StatementHeader(listOf("报告期", "总资产", "总负债", "净资产"))
         rows.forEach { r ->
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-            StatementDataRow(
-                listOf(
-                    periodLabel(r.reportDate, r.fiscalPeriod),
-                    formatOptMoney(r.totalAssets),
-                    formatOptMoney(r.totalLiabilities),
-                    formatOptMoney(r.totalEquity),
+            StatementMetricRow(
+                period = periodLabel(r.reportDate, r.fiscalPeriod),
+                metrics = listOf(
+                    r.totalAssets to r.totalAssetsYoy,
+                    r.totalLiabilities to r.totalLiabilitiesYoy,
+                    r.totalEquity to r.totalEquityYoy,
                 ),
             )
         }
@@ -919,7 +920,7 @@ private fun StatementHeader(cols: List<String>) {
         cols.forEachIndexed { i, c ->
             Text(
                 c,
-                modifier = Modifier.weight(if (i == 0) 1.2f else 1f),
+                modifier = Modifier.weight(if (i == 0) 1.15f else 1f),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -930,17 +931,39 @@ private fun StatementHeader(cols: List<String>) {
 }
 
 @Composable
-private fun StatementDataRow(cols: List<String>) {
-    Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-        cols.forEachIndexed { i, c ->
-            Text(
-                c,
-                modifier = Modifier.weight(if (i == 0) 1.2f else 1f),
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = if (i == 0) FontWeight.Medium else FontWeight.Normal,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+private fun StatementMetricRow(
+    period: String,
+    metrics: List<Pair<Double?, Double?>>,
+) {
+    Row(
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            period,
+            modifier = Modifier.weight(1.15f),
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Medium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        metrics.forEach { (amount, yoy) ->
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    formatStatementMoney(amount),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    formatStatementYoy(yoy),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = statementYoyColor(yoy),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
@@ -1661,6 +1684,33 @@ private fun formatOptNum(v: Double?): String =
 private fun formatOptYi(v: Double?): String =
     v?.let { String.format(Locale.US, "%.2f亿", it) } ?: "—"
 
-/** 财报金额（元）→ 亿/万 */
+/** 财报金额（元）→ 亿/万（基本面快照等仍用自适应） */
 private fun formatOptMoney(v: Double?): String =
     v?.let { formatAnalyzeAmount(it) } ?: "—"
+
+/**
+ * 财务报表金额：≥1 亿用「亿」保留 2 位；不足 1 亿用「万」保留 2 位。
+ * 单位按绝对值选择，符号保留。
+ */
+private fun formatStatementMoney(v: Double?): String {
+    if (v == null || !v.isFinite()) return "—"
+    val abs = kotlin.math.abs(v)
+    return if (abs >= 1e8) {
+        String.format(Locale.US, "%.2f亿", v / 1e8)
+    } else {
+        String.format(Locale.US, "%.2f万", v / 1e4)
+    }
+}
+
+private fun formatStatementYoy(yoy: Double?): String =
+    yoy?.takeIf { it.isFinite() }?.let { String.format(Locale.US, "%+.2f%%", it) } ?: "—"
+
+@Composable
+private fun statementYoyColor(yoy: Double?): Color {
+    val v = yoy ?: return MaterialTheme.colorScheme.onSurfaceVariant
+    return when {
+        v > 1e-9 -> QuoteColors.Up
+        v < -1e-9 -> QuoteColors.Down
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+}
