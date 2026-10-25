@@ -10,7 +10,6 @@ import com.lingxi.app.data.model.ScreenRequest
 import com.lingxi.app.data.model.ScreenResult
 import com.lingxi.app.data.model.DimAi
 import com.lingxi.app.data.model.StockAnalyze
-import com.lingxi.app.data.model.StockDetail
 import com.lingxi.app.data.model.StockSearchHit
 import com.lingxi.app.data.model.StrategyDef
 import com.lingxi.app.data.model.UpdateConditionRequest
@@ -56,15 +55,6 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
     private val _lastSavedId = MutableStateFlow<Long?>(null)
     val lastSavedId: StateFlow<Long?> = _lastSavedId.asStateFlow()
 
-    private val _stockDetail = MutableStateFlow<StockDetail?>(null)
-    val stockDetail: StateFlow<StockDetail?> = _stockDetail.asStateFlow()
-
-    private val _stockLoading = MutableStateFlow(false)
-    val stockLoading: StateFlow<Boolean> = _stockLoading.asStateFlow()
-
-    private val _stockError = MutableStateFlow<String?>(null)
-    val stockError: StateFlow<String?> = _stockError.asStateFlow()
-
     private val _stockAnalyze = MutableStateFlow<StockAnalyze?>(null)
     val stockAnalyze: StateFlow<StockAnalyze?> = _stockAnalyze.asStateFlow()
 
@@ -92,11 +82,6 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         refresh()
-    }
-
-    fun clearStockDetail() {
-        _stockDetail.value = null
-        _stockError.value = null
     }
 
     fun clearStockAnalyze() {
@@ -127,21 +112,6 @@ class ScreenViewModel(application: Application) : AndroidViewModel(application) 
                 _stockSearchHits.value = emptyList()
             }
             _stockSearchLoading.value = false
-        }
-    }
-
-    fun loadStockDetail(symbol: String) {
-        viewModelScope.launch {
-            _stockLoading.value = true
-            _stockError.value = null
-            _stockDetail.value = null
-            runCatching {
-                val api = ApiClient.create(prefs.configFlow.first())
-                _stockDetail.value = api.stockDetail(symbol)
-            }.onFailure {
-                _stockError.value = it.message ?: "加载失败"
-            }
-            _stockLoading.value = false
         }
     }
 

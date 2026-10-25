@@ -12,7 +12,6 @@ import com.lingxi.app.data.model.ScreenRequest
 import com.lingxi.app.data.model.ScreenResult
 import com.lingxi.app.data.model.StockAnalyze
 import com.lingxi.app.data.model.StockAnalyzeAi
-import com.lingxi.app.data.model.StockDetail
 import com.lingxi.app.data.model.StockSearchResult
 import com.lingxi.app.data.model.StrategyDef
 import com.lingxi.app.data.model.UpdateConditionRequest
@@ -70,9 +69,6 @@ interface LingxiApi {
         @Path("id") id: Long,
         @Query("top_n") topN: Int = 50,
     ): ScreenResult
-
-    @GET("api/market/stock")
-    suspend fun stockDetail(@Query("symbol") symbol: String): StockDetail
 
     @GET("api/market/stocks/search")
     suspend fun stocksSearch(

@@ -11,7 +11,7 @@
 | 项 | 现状 |
 |---|---|
 | 调用方 | Backend 进程内（`AiClient`）+ App 经市场 API |
-| App UI | **个股详情 →「AI 分析个股」** |
+| App UI | 首页「分析」Tab；策略选股结果点股票进分析页 |
 | 对外 HTTP | **不提供** 通用 `/api/ai/*`；个股分析走 `GET /api/market/stock/analyze` |
 | 实现 | `backend/src/ai/`、`backend/src/market/stock_analyze.rs`、`AppConfig` AI 配置 |
 
