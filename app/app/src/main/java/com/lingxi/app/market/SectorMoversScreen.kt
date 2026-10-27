@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lingxi.app.data.model.SectorBar
+import com.lingxi.app.data.model.SectorConstituentRow
 import com.lingxi.app.data.model.SectorDetail
 import com.lingxi.app.data.model.SectorMoverRow
 import com.lingxi.app.ui.QuoteColors
@@ -51,6 +52,7 @@ private enum class MoverSide { Gainers, Losers }
 @Composable
 fun SectorTab(
     viewModel: MarketViewModel,
+    onOpenStock: (String) -> Unit = {},
 ) {
     var selectedSymbol by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -62,6 +64,7 @@ fun SectorTab(
                 viewModel.clearSectorDetail()
                 selectedSymbol = null
             },
+            onOpenStock = onOpenStock,
         )
     } else {
         SectorMoversScreen(
@@ -280,6 +283,7 @@ fun SectorDetailScreen(
     viewModel: MarketViewModel,
     symbol: String,
     onBack: () -> Unit,
+    onOpenStock: (String) -> Unit = {},
 ) {
     val ui by viewModel.sectorDetail.collectAsStateWithLifecycle()
 
@@ -334,13 +338,19 @@ fun SectorDetailScreen(
                 color = MaterialTheme.colorScheme.error,
             )
         } else if (ui.data != null) {
-            SectorDetailBody(ui.data!!)
+            SectorDetailBody(
+                d = ui.data!!,
+                onOpenStock = onOpenStock,
+            )
         }
     }
 }
 
 @Composable
-private fun SectorDetailBody(d: SectorDetail) {
+private fun SectorDetailBody(
+    d: SectorDetail,
+    onOpenStock: (String) -> Unit,
+) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
@@ -397,6 +407,61 @@ private fun SectorDetailBody(d: SectorDetail) {
                 }
             }
         }
+        item {
+            Text(
+                if (d.constituents.isEmpty()) "成分股（暂无数据）"
+                else "成分股 ${d.constituents.size}",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        if (d.constituents.isNotEmpty()) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "名称",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "现价",
+                        modifier = Modifier.padding(start = 6.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "当日",
+                        modifier = Modifier.padding(start = 8.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "5日",
+                        modifier = Modifier.padding(start = 8.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "10日",
+                        modifier = Modifier.padding(start = 8.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            itemsIndexed(d.constituents) { idx, row ->
+                if (idx > 0) {
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                    )
+                }
+                ConstituentRowItem(row = row, onClick = { onOpenStock(row.symbol) })
+            }
+        }
         if (d.bars.isNotEmpty()) {
             item {
                 Text(
@@ -414,6 +479,41 @@ private fun SectorDetailBody(d: SectorDetail) {
                 SectorBarRow(bar)
             }
         }
+    }
+}
+
+@Composable
+private fun ConstituentRowItem(
+    row: SectorConstituentRow,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                row.name.ifBlank { row.symbol },
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+            Text(
+                row.symbol,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Text(
+            row.close?.let { formatPrice(it) } ?: "—",
+            modifier = Modifier.padding(start = 6.dp),
+            style = MaterialTheme.typography.bodySmall,
+        )
+        PctCell(row.changePct, bold = true)
+        PctCell(row.change5dPct)
+        PctCell(row.change10dPct)
     }
 }
 

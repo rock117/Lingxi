@@ -159,7 +159,14 @@ fun HomeScreen(
                     showBack = false,
                     embedded = true,
                 )
-                3 -> SectorTab(viewModel = marketViewModel)
+                3 -> SectorTab(
+                    viewModel = marketViewModel,
+                    onOpenStock = { symbol ->
+                        screenViewModel.clearStockAnalyze()
+                        screenViewModel.loadStockAnalyze(symbol)
+                        tab = 2
+                    },
+                )
                 else -> MoreTab(
                     marketViewModel = marketViewModel,
                     notificationViewModel = notificationViewModel,

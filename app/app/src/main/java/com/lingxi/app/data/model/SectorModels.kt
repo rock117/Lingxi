@@ -40,6 +40,17 @@ data class SectorBar(
 )
 
 @Serializable
+data class SectorConstituentRow(
+    val symbol: String = "",
+    val name: String = "",
+    val close: Double? = null,
+    @SerialName("change_pct") val changePct: Double? = null,
+    @SerialName("change_5d_pct") val change5dPct: Double? = null,
+    @SerialName("change_10d_pct") val change10dPct: Double? = null,
+    val amount: Double? = null,
+)
+
+@Serializable
 data class SectorDetail(
     val symbol: String = "",
     val name: String = "",
@@ -55,5 +66,6 @@ data class SectorDetail(
     val volume: Double = 0.0,
     @SerialName("change_5d_pct") val change5dPct: Double? = null,
     @SerialName("change_10d_pct") val change10dPct: Double? = null,
+    val constituents: List<SectorConstituentRow> = emptyList(),
     val bars: List<SectorBar> = emptyList(),
 )

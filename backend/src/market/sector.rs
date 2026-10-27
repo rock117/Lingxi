@@ -48,6 +48,18 @@ pub struct SectorBar {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct SectorConstituentRow {
+    pub symbol: String,
+    pub name: String,
+    /// 最新收盘；无行情时为 null
+    pub close: Option<f64>,
+    pub change_pct: Option<f64>,
+    pub change_5d_pct: Option<f64>,
+    pub change_10d_pct: Option<f64>,
+    pub amount: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SectorDetailOut {
     pub symbol: String,
     pub name: String,
@@ -63,6 +75,8 @@ pub struct SectorDetailOut {
     pub volume: f64,
     pub change_5d_pct: Option<f64>,
     pub change_10d_pct: Option<f64>,
+    /// 成分股（`sc_sector_constituent`），按当日涨跌幅降序
+    pub constituents: Vec<SectorConstituentRow>,
     /// 近 20 个开市日（升序）
     pub bars: Vec<SectorBar>,
 }
@@ -351,6 +365,8 @@ LIMIT 30
         v
     };
 
+    let constituents = load_constituents(db, &meta.symbol).await?;
+
     Ok(Some(SectorDetailOut {
         symbol: meta.symbol,
         name: meta.name,
@@ -366,6 +382,126 @@ LIMIT 30
         volume: latest.volume,
         change_5d_pct: change_nd(&closes_asc, 5),
         change_10d_pct: change_nd(&closes_asc, 10),
+        constituents,
         bars: bars_asc,
     }))
+}
+
+/// 成分股行情：`sc_sector_constituent` + `sc_stock_kline_d1_bfq`。
+async fn load_constituents(
+    db: &DatabaseConnection,
+    sector_symbol: &str,
+) -> Result<Vec<SectorConstituentRow>, DbErr> {
+    #[derive(Debug, FromQueryResult)]
+    struct Mem {
+        stock_symbol: String,
+        name: String,
+    }
+
+    let members = Mem::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+SELECT stock_symbol, COALESCE(name, '') AS name
+FROM sc_sector_constituent
+WHERE sector_symbol = $1
+ORDER BY stock_symbol
+"#,
+        [sector_symbol.into()],
+    ))
+    .all(db)
+    .await?;
+
+    if members.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let symbols: Vec<String> = members.iter().map(|m| m.stock_symbol.clone()).collect();
+
+    #[derive(Debug, FromQueryResult)]
+    struct QuoteRow {
+        symbol: String,
+        close: f64,
+        pre_close: f64,
+        amount: f64,
+    }
+
+    let quotes = QuoteRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+SELECT DISTINCT ON (symbol)
+    symbol,
+    close::double precision AS close,
+    pre_close::double precision AS pre_close,
+    amount::double precision AS amount
+FROM sc_stock_kline_d1_bfq
+WHERE symbol = ANY($1)
+ORDER BY symbol, trade_date DESC
+"#,
+        [symbols.clone().into()],
+    ))
+    .all(db)
+    .await?;
+
+    let quote_map: HashMap<String, QuoteRow> =
+        quotes.into_iter().map(|q| (q.symbol.clone(), q)).collect();
+
+    #[derive(Debug, FromQueryResult)]
+    struct CRow {
+        symbol: String,
+        #[allow(dead_code)]
+        trade_date: NaiveDate,
+        close: f64,
+    }
+
+    let krows = CRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+SELECT symbol, trade_date, close::double precision AS close
+FROM (
+    SELECT
+        symbol,
+        trade_date,
+        close,
+        ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY trade_date DESC) AS rn
+    FROM sc_stock_kline_d1_bfq
+    WHERE symbol = ANY($1)
+) t
+WHERE rn <= 11
+ORDER BY symbol, trade_date ASC
+"#,
+        [symbols.into()],
+    ))
+    .all(db)
+    .await?;
+
+    let mut closes_map: HashMap<String, Vec<f64>> = HashMap::new();
+    for r in krows {
+        closes_map.entry(r.symbol).or_default().push(r.close);
+    }
+
+    let mut out: Vec<SectorConstituentRow> = members
+        .into_iter()
+        .map(|m| {
+            let q = quote_map.get(&m.stock_symbol);
+            let closes = closes_map.get(&m.stock_symbol);
+            SectorConstituentRow {
+                symbol: m.stock_symbol,
+                name: m.name,
+                close: q.map(|x| x.close),
+                change_pct: q.map(|x| change_pct(x.close, x.pre_close)),
+                change_5d_pct: closes.and_then(|c| change_nd(c, 5)),
+                change_10d_pct: closes.and_then(|c| change_nd(c, 10)),
+                amount: q.map(|x| x.amount),
+            }
+        })
+        .collect();
+
+    out.sort_by(|a, b| match (b.change_pct, a.change_pct) {
+        (Some(x), Some(y)) => x.total_cmp(&y),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.symbol.cmp(&b.symbol),
+    });
+
+    Ok(out)
 }
