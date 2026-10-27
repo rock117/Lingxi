@@ -16,7 +16,10 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -34,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lingxi.app.data.model.SectorBar
 import com.lingxi.app.data.model.SectorDetail
@@ -41,6 +45,8 @@ import com.lingxi.app.data.model.SectorMoverRow
 import com.lingxi.app.ui.QuoteColors
 import com.lingxi.app.viewmodel.MarketViewModel
 import java.util.Locale
+
+private enum class MoverSide { Gainers, Losers }
 
 @Composable
 fun SectorTab(
@@ -71,6 +77,7 @@ fun SectorMoversScreen(
     onOpenSector: (String) -> Unit,
 ) {
     val ui by viewModel.sectorMovers.collectAsStateWithLifecycle()
+    var side by rememberSaveable { mutableStateOf(MoverSide.Gainers) }
 
     LaunchedEffect(Unit) {
         viewModel.loadSectorMoversIfNeeded()
@@ -94,7 +101,7 @@ fun SectorMoversScreen(
                 )
                 Text(
                     buildString {
-                        append("按当日涨跌幅 · 行业/概念 Top10")
+                        append("按当日涨跌 · 行业/概念 Top10")
                         ui.data?.tradeDate?.takeIf { it.isNotBlank() }?.let {
                             append(" · $it")
                         }
@@ -111,77 +118,111 @@ fun SectorMoversScreen(
             }
         }
 
-        when {
-            ui.loading && ui.data == null -> {
-                Box(Modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            FilterChip(
+                selected = side == MoverSide.Gainers,
+                onClick = { side = MoverSide.Gainers },
+                label = { Text("领涨") },
+            )
+            FilterChip(
+                selected = side == MoverSide.Losers,
+                onClick = { side = MoverSide.Losers },
+                label = { Text("领跌") },
+            )
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "#",
+                modifier = Modifier.padding(end = 12.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                "板块",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                "当日",
+                modifier = Modifier.padding(start = 4.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                "5日",
+                modifier = Modifier.padding(start = 10.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                "10日",
+                modifier = Modifier.padding(start = 10.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        if (ui.loading && ui.data == null) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator()
+            }
+        } else if (ui.error != null && ui.data == null) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 48.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(ui.error ?: "加载失败", color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = { viewModel.refreshSectorMovers() }) {
+                    Text("重试")
                 }
             }
-            ui.error != null && ui.data == null -> {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(top = 48.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(ui.error ?: "加载失败", color = MaterialTheme.colorScheme.error)
-                    TextButton(onClick = { viewModel.refreshSectorMovers() }) {
-                        Text("重试")
+        } else {
+            val data = ui.data
+            val rows = when (side) {
+                MoverSide.Gainers -> data?.gainers.orEmpty()
+                MoverSide.Losers -> data?.losers.orEmpty()
+            }
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
+                if (ui.error != null) {
+                    item {
+                        Text(
+                            ui.error!!,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     }
                 }
-            }
-            else -> {
-                val data = ui.data
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    if (ui.error != null) {
-                        item {
-                            Text(
-                                ui.error!!,
-                                color = MaterialTheme.colorScheme.error,
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                    }
-                    item {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            "领涨 Top${data?.topN ?: 10}",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                    itemsIndexed(data?.gainers.orEmpty()) { idx, row ->
-                        SectorMoverRowItem(
-                            rank = idx + 1,
-                            row = row,
-                            onClick = { onOpenSector(row.symbol) },
-                        )
-                        HorizontalDivider(
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                        )
-                    }
-                    item {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            "领跌 Top${data?.topN ?: 10}",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                    itemsIndexed(data?.losers.orEmpty()) { idx, row ->
-                        SectorMoverRowItem(
-                            rank = idx + 1,
-                            row = row,
-                            onClick = { onOpenSector(row.symbol) },
-                        )
-                        HorizontalDivider(
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                        )
-                    }
+                itemsIndexed(rows) { idx, row ->
+                    SectorMoverRowItem(
+                        rank = idx + 1,
+                        row = row,
+                        onClick = { onOpenSector(row.symbol) },
+                    )
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                    )
                 }
             }
         }
@@ -210,24 +251,28 @@ private fun SectorMoverRowItem(
         Column(modifier = Modifier.weight(1f)) {
             Text(row.name.ifBlank { row.symbol }, fontWeight = FontWeight.Medium)
             Text(
-                typeLabel(row.sectorType),
+                "${typeLabel(row.sectorType)} · ${formatAmount(row.amount)}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Column(horizontalAlignment = Alignment.End) {
-            Text(
-                formatPct(row.changePct),
-                color = QuoteColors.of(row.changePct),
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                formatAmount(row.amount),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        PctCell(row.changePct, bold = true)
+        PctCell(row.change5dPct)
+        PctCell(row.change10dPct)
     }
+}
+
+@Composable
+private fun PctCell(value: Double?, bold: Boolean = false) {
+    Text(
+        value?.let { formatPct(it) } ?: "—",
+        modifier = Modifier.padding(start = 10.dp),
+        style = MaterialTheme.typography.bodySmall.copy(
+            fontSize = 12.sp,
+            fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal,
+        ),
+        color = value?.let { QuoteColors.of(it) } ?: MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable
@@ -275,22 +320,21 @@ fun SectorDetailScreen(
             }
         }
 
-        when {
-            ui.loading && ui.data == null -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
+        if (ui.loading && ui.data == null) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator()
             }
-            ui.error != null && ui.data == null -> {
-                Text(
-                    ui.error ?: "加载失败",
-                    modifier = Modifier.padding(16.dp),
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-            ui.data != null -> {
-                SectorDetailBody(ui.data!!)
-            }
+        } else if (ui.error != null && ui.data == null) {
+            Text(
+                ui.error ?: "加载失败",
+                modifier = Modifier.padding(16.dp),
+                color = MaterialTheme.colorScheme.error,
+            )
+        } else if (ui.data != null) {
+            SectorDetailBody(ui.data!!)
         }
     }
 }

@@ -9,6 +9,8 @@ data class SectorMoverRow(
     val name: String = "",
     @SerialName("sector_type") val sectorType: String = "",
     @SerialName("change_pct") val changePct: Double = 0.0,
+    @SerialName("change_5d_pct") val change5dPct: Double? = null,
+    @SerialName("change_10d_pct") val change10dPct: Double? = null,
     val close: Double = 0.0,
     @SerialName("pre_close") val preClose: Double = 0.0,
     val amount: Double = 0.0,

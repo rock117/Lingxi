@@ -1,6 +1,8 @@
 //! 板块榜 / 详情：读 `sc_sector` + `sc_sector_kline_d1`。
 //! 当日涨跌幅表内无独立字段，用 `(close/pre_close - 1)*100` 计算。
 
+use std::collections::HashMap;
+
 use chrono::NaiveDate;
 use sea_orm::{DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
 use serde::Serialize;
@@ -14,6 +16,8 @@ pub struct SectorMoverRow {
     pub name: String,
     pub sector_type: String,
     pub change_pct: f64,
+    pub change_5d_pct: Option<f64>,
+    pub change_10d_pct: Option<f64>,
     pub close: f64,
     pub pre_close: f64,
     pub amount: f64,
@@ -166,6 +170,8 @@ WHERE s.sector_type = ANY($1)
         .into_iter()
         .map(|r| SectorMoverRow {
             change_pct: change_pct(r.close, r.pre_close),
+            change_5d_pct: None,
+            change_10d_pct: None,
             symbol: r.symbol,
             name: r.name,
             sector_type: r.sector_type,
@@ -177,10 +183,13 @@ WHERE s.sector_type = ANY($1)
         .collect();
 
     all.sort_by(|a, b| b.change_pct.total_cmp(&a.change_pct));
-    let gainers: Vec<_> = all.iter().take(top_n).cloned().collect();
+    let mut gainers: Vec<_> = all.iter().take(top_n).cloned().collect();
     let mut by_asc = all;
     by_asc.sort_by(|a, b| a.change_pct.total_cmp(&b.change_pct));
-    let losers: Vec<_> = by_asc.into_iter().take(top_n).collect();
+    let mut losers: Vec<_> = by_asc.into_iter().take(top_n).collect();
+
+    fill_nd_changes(db, &mut gainers).await?;
+    fill_nd_changes(db, &mut losers).await?;
 
     Ok(SectorMoversOut {
         trade_date,
@@ -189,6 +198,60 @@ WHERE s.sector_type = ANY($1)
         gainers,
         losers,
     })
+}
+
+/// 仅为榜单内标的补 5/10 日涨跌（避免全市场扫 K）。
+async fn fill_nd_changes(
+    db: &DatabaseConnection,
+    rows: &mut [SectorMoverRow],
+) -> Result<(), DbErr> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let symbols: Vec<String> = rows.iter().map(|r| r.symbol.clone()).collect();
+
+    #[derive(Debug, FromQueryResult)]
+    struct CRow {
+        symbol: String,
+        #[allow(dead_code)]
+        trade_date: NaiveDate,
+        close: f64,
+    }
+
+    let sql = r#"
+SELECT symbol, trade_date, close::double precision AS close
+FROM (
+    SELECT
+        symbol,
+        trade_date,
+        close,
+        ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY trade_date DESC) AS rn
+    FROM sc_sector_kline_d1
+    WHERE symbol = ANY($1)
+) t
+WHERE rn <= 11
+ORDER BY symbol, trade_date ASC
+"#;
+
+    let krows = CRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        sql,
+        [symbols.into()],
+    ))
+    .all(db)
+    .await?;
+
+    let mut by_sym: HashMap<String, Vec<f64>> = HashMap::new();
+    for r in krows {
+        by_sym.entry(r.symbol).or_default().push(r.close);
+    }
+    for row in rows.iter_mut() {
+        if let Some(closes) = by_sym.get(&row.symbol) {
+            row.change_5d_pct = change_nd(closes, 5);
+            row.change_10d_pct = change_nd(closes, 10);
+        }
+    }
+    Ok(())
 }
 
 /// 板块详情：当日行情 + 5/10 日涨跌 + 近 20 日 K。
