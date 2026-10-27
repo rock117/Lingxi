@@ -632,6 +632,17 @@ private fun ShortTermTabContent(
                                 "neutral" -> "中性"
                                 else -> "—"
                             },
+                            "RSIΔ5" to (dim.rsiDelta5?.let {
+                                String.format(Locale.US, "%+.1f", it)
+                            } ?: "—"),
+                            "近10超买日" to dim.rsiDaysOb.toString(),
+                            "近10超卖日" to dim.rsiDaysOs.toString(),
+                            "穿越" to when {
+                                dim.rsiCrossedOversold && dim.rsiCrossedOverbought -> "上穿超卖/下破超买"
+                                dim.rsiCrossedOversold -> "上穿超卖"
+                                dim.rsiCrossedOverbought -> "下破超买"
+                                else -> "—"
+                            },
                         ),
                     )
                     if (dim.labels.isNotEmpty()) {

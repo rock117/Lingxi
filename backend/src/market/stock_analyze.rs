@@ -154,6 +154,16 @@ pub struct ShortTermDim {
     pub rsi14: Option<f64>,
     /// `overbought` | `oversold` | `neutral` | `unknown`
     pub rsi_zone: String,
+    /// 今日 RSI − 5 日前 RSI
+    pub rsi_delta_5: Option<f64>,
+    /// 近 10 日 RSI≥70 的天数
+    pub rsi_days_ob: u32,
+    /// 近 10 日 RSI≤30 的天数
+    pub rsi_days_os: u32,
+    /// 昨→今上穿超卖线（30）
+    pub rsi_crossed_oversold: bool,
+    /// 昨→今下破超买线（70）
+    pub rsi_crossed_overbought: bool,
     pub labels: Vec<String>,
     pub ai: DimAi,
 }
@@ -1508,6 +1518,20 @@ fn build_short_term(all_bars: &[StockAnalyzeBar], last_price: Option<f64>) -> Sh
         None => "unknown",
     }
     .to_string();
+    let rsi_delta_5 = super::indicators::rsi_delta(&closes, RSI_PERIOD, 5);
+    let (rsi_days_ob, rsi_days_os) = super::indicators::rsi_zone_day_counts(
+        &closes,
+        RSI_PERIOD,
+        10,
+        RSI_OVERBOUGHT,
+        RSI_OVERSOLD,
+    );
+    let (rsi_crossed_oversold, rsi_crossed_overbought) = super::indicators::rsi_cross_flags(
+        &closes,
+        RSI_PERIOD,
+        RSI_OVERBOUGHT,
+        RSI_OVERSOLD,
+    );
 
     let mut labels = Vec::new();
     match ma_alignment.as_str() {
@@ -1543,12 +1567,24 @@ fn build_short_term(all_bars: &[StockAnalyzeBar], last_price: Option<f64>) -> Sh
         "oversold" => labels.push("RSI超卖".into()),
         _ => {}
     }
-    if let Some((cur, prev)) = super::indicators::rsi_latest_pair(&closes, RSI_PERIOD) {
-        if prev <= RSI_OVERSOLD && cur > RSI_OVERSOLD {
-            labels.push("RSI上穿超卖".into());
-        } else if prev >= RSI_OVERBOUGHT && cur < RSI_OVERBOUGHT {
-            labels.push("RSI下破超买".into());
+    if rsi_crossed_oversold {
+        labels.push("RSI上穿超卖".into());
+    }
+    if rsi_crossed_overbought {
+        labels.push("RSI下破超买".into());
+    }
+    if let Some(d) = rsi_delta_5 {
+        if d >= 5.0 {
+            labels.push("RSI抬升".into());
+        } else if d <= -5.0 {
+            labels.push("RSI回落".into());
         }
+    }
+    if rsi_days_ob >= 5 {
+        labels.push("RSI持续超买".into());
+    }
+    if rsi_days_os >= 5 {
+        labels.push("RSI持续超卖".into());
     }
 
     ShortTermDim {
@@ -1571,6 +1607,11 @@ fn build_short_term(all_bars: &[StockAnalyzeBar], last_price: Option<f64>) -> Sh
         volume_label,
         rsi14,
         rsi_zone,
+        rsi_delta_5,
+        rsi_days_ob,
+        rsi_days_os,
+        rsi_crossed_oversold,
+        rsi_crossed_overbought,
         labels,
         ai: DimAi::pending(),
     }

@@ -35,13 +35,13 @@ tape = """
 
 short_term = """
 你是 A 股短线技术分析师（日线）。
-用户 JSON 含：quote 与 short_term（涨跌、MA、price_vs_ma*、ma_alignment、近高近低、volume_label、rsi14、rsi_zone、labels、bars）。
+用户 JSON 含：quote 与 short_term（涨跌、MA、price_vs_ma*、ma_alignment、近高近低、volume_label、rsi14、rsi_zone、rsi_delta_5、rsi_days_ob、rsi_days_os、rsi_crossed_oversold、rsi_crossed_overbought、labels、bars）。
 
-分析框架（禁止引用 JSON 没有的 MACD/布林；RSI 仅可引用 rsi14/rsi_zone）：
+分析框架（禁止引用 JSON 没有的 MACD/布林；RSI 仅可引用上述 rsi* 字段）：
 1. 5/10/20 日涨跌斜率与一致性。
 2. 均线排列与现价相对 MA 位置。
 3. 量价（volume_label / amount_vs_5d_avg）是否确认。
-4. RSI(14)：rsi_zone=overbought/oversold/neutral；勿单独当买卖指令。
+4. RSI(14)：zone；delta_5 看抬升/回落；days_ob/os 看近10日钝化；crossed_* 为昨今穿越，勿单独当买卖指令。
 5. 近高近低观察位；一句「何会改变看法」。
 
 输出 JSON（见公共规则）。不谈 PE/财报。

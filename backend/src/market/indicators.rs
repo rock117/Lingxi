@@ -59,6 +59,70 @@ pub(crate) fn rsi_latest_pair(closes: &[f64], period: usize) -> Option<(f64, f64
     Some((finite[n - 1], finite[n - 2]))
 }
 
+/// 今日 RSI − `lookback` 根 K 线前的 RSI（两侧皆有效才有值）。
+pub(crate) fn rsi_delta(closes: &[f64], period: usize, lookback: usize) -> Option<f64> {
+    if lookback == 0 {
+        return Some(0.0);
+    }
+    let series = rsi_series(closes, period);
+    let n = series.len();
+    if n <= lookback {
+        return None;
+    }
+    let cur = series[n - 1];
+    let past = series[n - 1 - lookback];
+    if cur.is_finite() && past.is_finite() {
+        Some(cur - past)
+    } else {
+        None
+    }
+}
+
+/// 近 `window` 根 K 线内 RSI≥超买 / ≤超卖 的天数。返回 `(days_ob, days_os)`。
+pub(crate) fn rsi_zone_day_counts(
+    closes: &[f64],
+    period: usize,
+    window: usize,
+    overbought: f64,
+    oversold: f64,
+) -> (u32, u32) {
+    let series = rsi_series(closes, period);
+    if window == 0 || series.is_empty() {
+        return (0, 0);
+    }
+    let start = series.len().saturating_sub(window);
+    let mut ob = 0u32;
+    let mut os = 0u32;
+    for v in &series[start..] {
+        if !v.is_finite() {
+            continue;
+        }
+        if *v >= overbought {
+            ob += 1;
+        }
+        if *v <= oversold {
+            os += 1;
+        }
+    }
+    (ob, os)
+}
+
+/// `(crossed_oversold, crossed_overbought)`：昨→今上穿超卖线 / 下破超买线。
+pub(crate) fn rsi_cross_flags(
+    closes: &[f64],
+    period: usize,
+    overbought: f64,
+    oversold: f64,
+) -> (bool, bool) {
+    match rsi_latest_pair(closes, period) {
+        Some((cur, prev)) => (
+            prev <= oversold && cur > oversold,
+            prev >= overbought && cur < overbought,
+        ),
+        None => (false, false),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,5 +140,25 @@ mod tests {
     fn rsi_needs_period_plus_one() {
         let closes: Vec<f64> = (0..14).map(|i| i as f64).collect();
         assert!(rsi_latest(&closes, 14).is_none());
+    }
+
+    #[test]
+    fn rsi_delta_needs_lookback() {
+        // 严格上涨：RSI 很快顶到高位，Δ5 应可算
+        let closes: Vec<f64> = (0..40).map(|i| 10.0 + i as f64).collect();
+        assert!(rsi_delta(&closes, 14, 5).is_some());
+        assert!(rsi_delta(&closes, 14, 5).unwrap().is_finite());
+    }
+
+    #[test]
+    fn rsi_cross_oversold_on_rebound() {
+        // 先跌后涨，尽量制造穿越（不保证阈值，只检查 API 不 panic）
+        let mut closes: Vec<f64> = (0..25).map(|i| 100.0 - i as f64).collect();
+        for i in 0..15 {
+            closes.push(75.0 + i as f64 * 2.0);
+        }
+        let _ = rsi_cross_flags(&closes, 14, 70.0, 30.0);
+        let (ob, os) = rsi_zone_day_counts(&closes, 14, 10, 70.0, 30.0);
+        assert!(ob + os <= 10);
     }
 }

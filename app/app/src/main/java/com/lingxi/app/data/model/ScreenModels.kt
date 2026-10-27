@@ -151,6 +151,11 @@ data class ShortTermDim(
     @SerialName("volume_label") val volumeLabel: String = "未知",
     val rsi14: Double? = null,
     @SerialName("rsi_zone") val rsiZone: String = "unknown",
+    @SerialName("rsi_delta_5") val rsiDelta5: Double? = null,
+    @SerialName("rsi_days_ob") val rsiDaysOb: Int = 0,
+    @SerialName("rsi_days_os") val rsiDaysOs: Int = 0,
+    @SerialName("rsi_crossed_oversold") val rsiCrossedOversold: Boolean = false,
+    @SerialName("rsi_crossed_overbought") val rsiCrossedOverbought: Boolean = false,
     val labels: List<String> = emptyList(),
     val ai: DimAi = DimAi(),
 )
