@@ -150,6 +150,10 @@ pub struct ShortTermDim {
     pub dist_to_low_pct: Option<f64>,
     /// `放量` | `缩量` | `平量` | `未知`
     pub volume_label: String,
+    /// Wilder RSI(14)；样本不足为 null
+    pub rsi14: Option<f64>,
+    /// `overbought` | `oversold` | `neutral` | `unknown`
+    pub rsi_zone: String,
     pub labels: Vec<String>,
     pub ai: DimAi,
 }
@@ -738,7 +742,7 @@ pub async fn analyze_stock(
     let used_trade_date = ticks.used_trade_date;
     let detail_status = ticks.status;
 
-    let bars_raw = data_source::load_stock_recent_klines(db, symbol, 30).await?;
+    let bars_raw = data_source::load_stock_recent_klines(db, symbol, 60).await?;
     let all_bars: Vec<StockAnalyzeBar> = bars_raw
         .iter()
         .map(|b| StockAnalyzeBar {
@@ -1492,6 +1496,19 @@ fn build_short_term(all_bars: &[StockAnalyzeBar], last_price: Option<f64>) -> Sh
     }
     .to_string();
 
+    const RSI_PERIOD: usize = 14;
+    const RSI_OVERBOUGHT: f64 = 70.0;
+    const RSI_OVERSOLD: f64 = 30.0;
+    let closes: Vec<f64> = all_bars.iter().map(|b| b.close).collect();
+    let rsi14 = super::indicators::rsi_latest(&closes, RSI_PERIOD);
+    let rsi_zone = match rsi14 {
+        Some(v) if v >= RSI_OVERBOUGHT => "overbought",
+        Some(v) if v <= RSI_OVERSOLD => "oversold",
+        Some(_) => "neutral",
+        None => "unknown",
+    }
+    .to_string();
+
     let mut labels = Vec::new();
     match ma_alignment.as_str() {
         "bull" => labels.push("均线多头".into()),
@@ -1521,6 +1538,18 @@ fn build_short_term(all_bars: &[StockAnalyzeBar], last_price: Option<f64>) -> Sh
             labels.push("靠近近低".into());
         }
     }
+    match rsi_zone.as_str() {
+        "overbought" => labels.push("RSI超买".into()),
+        "oversold" => labels.push("RSI超卖".into()),
+        _ => {}
+    }
+    if let Some((cur, prev)) = super::indicators::rsi_latest_pair(&closes, RSI_PERIOD) {
+        if prev <= RSI_OVERSOLD && cur > RSI_OVERSOLD {
+            labels.push("RSI上穿超卖".into());
+        } else if prev >= RSI_OVERBOUGHT && cur < RSI_OVERBOUGHT {
+            labels.push("RSI下破超买".into());
+        }
+    }
 
     ShortTermDim {
         bars: show,
@@ -1540,6 +1569,8 @@ fn build_short_term(all_bars: &[StockAnalyzeBar], last_price: Option<f64>) -> Sh
         dist_to_high_pct,
         dist_to_low_pct,
         volume_label,
+        rsi14,
+        rsi_zone,
         labels,
         ai: DimAi::pending(),
     }

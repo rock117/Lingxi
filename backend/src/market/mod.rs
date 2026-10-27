@@ -8,6 +8,7 @@
 //! 算法变更须先改文档再改代码。
 
 pub mod calculator;
+pub mod indicators;
 pub mod data_source;
 pub mod domain;
 pub mod eastmoney;

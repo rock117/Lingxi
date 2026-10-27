@@ -149,6 +149,8 @@ data class ShortTermDim(
     @SerialName("dist_to_high_pct") val distToHighPct: Double? = null,
     @SerialName("dist_to_low_pct") val distToLowPct: Double? = null,
     @SerialName("volume_label") val volumeLabel: String = "未知",
+    val rsi14: Double? = null,
+    @SerialName("rsi_zone") val rsiZone: String = "unknown",
     val labels: List<String> = emptyList(),
     val ai: DimAi = DimAi(),
 )

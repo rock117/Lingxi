@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::domain::{MarketDataInput, StockDailyData};
 use super::fundamentals::{BalanceSnapshot, CashflowSnapshot, IncomeSnapshot};
+use super::indicators::rsi_series;
 
 /// 选股时可选的基本面快照。
 #[derive(Debug, Clone, Copy, Default)]
@@ -861,43 +862,6 @@ fn eval_rsi(rule: &serde_json::Value, series: &[Bar]) -> bool {
         "overbought" => rsi[n - 2] >= overbought && rsi[n - 1] < overbought,
         _ => rsi[n - 2] <= oversold && rsi[n - 1] > oversold,
     }
-}
-
-fn rsi_series(closes: &[f64], period: usize) -> Vec<f64> {
-    let mut out = vec![f64::NAN; closes.len()];
-    if closes.len() <= period {
-        return out;
-    }
-    let mut gain = 0.0;
-    let mut loss = 0.0;
-    for i in 1..=period {
-        let d = closes[i] - closes[i - 1];
-        if d >= 0.0 {
-            gain += d;
-        } else {
-            loss -= d;
-        }
-    }
-    let mut avg_gain = gain / period as f64;
-    let mut avg_loss = loss / period as f64;
-    out[period] = rsi_from_avg(avg_gain, avg_loss);
-    for i in (period + 1)..closes.len() {
-        let d = closes[i] - closes[i - 1];
-        let g = if d > 0.0 { d } else { 0.0 };
-        let l = if d < 0.0 { -d } else { 0.0 };
-        avg_gain = (avg_gain * (period as f64 - 1.0) + g) / period as f64;
-        avg_loss = (avg_loss * (period as f64 - 1.0) + l) / period as f64;
-        out[i] = rsi_from_avg(avg_gain, avg_loss);
-    }
-    out
-}
-
-fn rsi_from_avg(avg_gain: f64, avg_loss: f64) -> f64 {
-    if avg_loss <= 1e-12 {
-        return 100.0;
-    }
-    let rs = avg_gain / avg_loss;
-    100.0 - (100.0 / (1.0 + rs))
 }
 
 fn eval_volume_spike(rule: &serde_json::Value, series: &[Bar], today: &StockDailyData) -> bool {

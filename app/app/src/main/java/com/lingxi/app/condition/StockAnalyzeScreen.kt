@@ -623,6 +623,15 @@ private fun ShortTermTabContent(
                             } ?: "—"),
                             "距MA5" to formatOptPct(dim.priceVsMa5Pct),
                             "量能" to dim.volumeLabel,
+                            "RSI(14)" to (dim.rsi14?.let {
+                                String.format(Locale.US, "%.1f", it)
+                            } ?: "—"),
+                            "RSI区间" to when (dim.rsiZone) {
+                                "overbought" -> "超买"
+                                "oversold" -> "超卖"
+                                "neutral" -> "中性"
+                                else -> "—"
+                            },
                         ),
                     )
                     if (dim.labels.isNotEmpty()) {
