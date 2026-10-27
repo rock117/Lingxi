@@ -10,6 +10,8 @@ import com.lingxi.app.data.model.MttResult
 import com.lingxi.app.data.model.NotificationItem
 import com.lingxi.app.data.model.ScreenRequest
 import com.lingxi.app.data.model.ScreenResult
+import com.lingxi.app.data.model.SectorDetail
+import com.lingxi.app.data.model.SectorMovers
 import com.lingxi.app.data.model.StockAnalyze
 import com.lingxi.app.data.model.StockAnalyzeAi
 import com.lingxi.app.data.model.StockAnalyzeTicks
@@ -92,6 +94,17 @@ interface LingxiApi {
         @Query("dim") dim: String,
         @Query("force") force: Boolean = false,
     ): StockAnalyzeAi
+
+    @GET("api/market/sectors/movers")
+    suspend fun sectorMovers(
+        @Query("top_n") topN: Int = 10,
+        @Query("types") types: String? = "INDUSTRY,CONCEPT",
+    ): SectorMovers
+
+    @GET("api/market/sectors/detail")
+    suspend fun sectorDetail(
+        @Query("symbol") symbol: String,
+    ): SectorDetail
 
     @GET("api/market/fund-stats/meta")
     suspend fun fundStatsMeta(): FundStatsMeta

@@ -9,6 +9,8 @@ import com.lingxi.app.data.model.FundStatsResult
 import com.lingxi.app.data.model.MsiResult
 import com.lingxi.app.data.model.MttResult
 import com.lingxi.app.data.model.PeriodOption
+import com.lingxi.app.data.model.SectorDetail
+import com.lingxi.app.data.model.SectorMovers
 import com.lingxi.app.data.model.ServerConfig
 import com.lingxi.app.data.prefs.ServerPrefs
 import kotlinx.coroutines.Job
@@ -48,6 +50,19 @@ data class FundStatsUiState(
     val error: String? = null,
 )
 
+data class SectorMoversUiState(
+    val loading: Boolean = false,
+    val data: SectorMovers? = null,
+    val error: String? = null,
+)
+
+data class SectorDetailUiState(
+    val loading: Boolean = false,
+    val data: SectorDetail? = null,
+    val error: String? = null,
+    val symbol: String? = null,
+)
+
 class MarketViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = ServerPrefs(application)
 
@@ -59,6 +74,12 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _fundStats = MutableStateFlow(FundStatsUiState())
     val fundStats: StateFlow<FundStatsUiState> = _fundStats.asStateFlow()
+
+    private val _sectorMovers = MutableStateFlow(SectorMoversUiState())
+    val sectorMovers: StateFlow<SectorMoversUiState> = _sectorMovers.asStateFlow()
+
+    private val _sectorDetail = MutableStateFlow(SectorDetailUiState())
+    val sectorDetail: StateFlow<SectorDetailUiState> = _sectorDetail.asStateFlow()
 
     private var autoRefreshJob: Job? = null
     private val shanghaiZone = ZoneId.of("Asia/Shanghai")
@@ -206,6 +227,53 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
                     serverHint = cfg.httpBaseUrl(),
                     lastSuccessAt = _ui.value.lastSuccessAt,
                     refreshIntervalMinutes = cfg.refreshIntervalMinutes.coerceIn(1, 60),
+                )
+            }
+        }
+    }
+
+    fun loadSectorMoversIfNeeded() {
+        if (_sectorMovers.value.data != null || _sectorMovers.value.loading) return
+        refreshSectorMovers()
+    }
+
+    fun refreshSectorMovers() {
+        viewModelScope.launch {
+            val cfg = prefs.configFlow.first()
+            val prev = _sectorMovers.value
+            _sectorMovers.value = prev.copy(loading = true, error = null)
+            try {
+                val api = ApiClient.create(cfg)
+                val data = api.sectorMovers(topN = 10, types = "INDUSTRY,CONCEPT")
+                _sectorMovers.value = SectorMoversUiState(loading = false, data = data)
+            } catch (e: Exception) {
+                _sectorMovers.value = prev.copy(
+                    loading = false,
+                    error = e.message ?: e.javaClass.simpleName,
+                )
+            }
+        }
+    }
+
+    fun clearSectorDetail() {
+        _sectorDetail.value = SectorDetailUiState()
+    }
+
+    fun loadSectorDetail(symbol: String) {
+        val sym = symbol.trim()
+        if (sym.isEmpty()) return
+        viewModelScope.launch {
+            val cfg = prefs.configFlow.first()
+            _sectorDetail.value = SectorDetailUiState(loading = true, symbol = sym)
+            try {
+                val api = ApiClient.create(cfg)
+                val data = api.sectorDetail(sym)
+                _sectorDetail.value = SectorDetailUiState(loading = false, data = data, symbol = sym)
+            } catch (e: Exception) {
+                _sectorDetail.value = SectorDetailUiState(
+                    loading = false,
+                    error = e.message ?: e.javaClass.simpleName,
+                    symbol = sym,
                 )
             }
         }

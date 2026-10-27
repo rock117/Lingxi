@@ -5,10 +5,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Assessment
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ListAlt
-import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Badge
@@ -31,9 +31,9 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lingxi.app.condition.StockAnalyzeScreen
 import com.lingxi.app.condition.StrategyListScreen
-import com.lingxi.app.market.FundStatsScreen
+import com.lingxi.app.market.MoreTab
+import com.lingxi.app.market.SectorTab
 import com.lingxi.app.market.SentimentScreen
-import com.lingxi.app.notification.NotificationListScreen
 import com.lingxi.app.viewmodel.MarketViewModel
 import com.lingxi.app.viewmodel.NotificationViewModel
 import com.lingxi.app.viewmodel.ScreenViewModel
@@ -52,6 +52,7 @@ fun HomeScreen(
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val unread by notificationViewModel.unreadCount.collectAsStateWithLifecycle()
     val analyze by screenViewModel.stockAnalyze.collectAsStateWithLifecycle()
+    val sectorDetail by marketViewModel.sectorDetail.collectAsStateWithLifecycle()
 
     val title = when (tab) {
         0 -> "短线情绪 · 中期结构"
@@ -66,8 +67,14 @@ fun HomeScreen(
                 else -> "AI 分析个股"
             }
         }
-        3 -> "A股财报统计"
-        else -> "通知"
+        3 -> {
+            val d = sectorDetail.data
+            when {
+                d != null && d.name.isNotBlank() -> d.name
+                else -> "板块强弱"
+            }
+        }
+        else -> "更多"
     }
 
     Scaffold(
@@ -104,8 +111,8 @@ fun HomeScreen(
                 NavigationBarItem(
                     selected = tab == 3,
                     onClick = { tab = 3 },
-                    icon = { Icon(Icons.Default.Assessment, contentDescription = null) },
-                    label = { Text("财报") },
+                    icon = { Icon(Icons.Default.GridView, contentDescription = null) },
+                    label = { Text("板块") },
                 )
                 NavigationBarItem(
                     selected = tab == 4,
@@ -118,10 +125,10 @@ fun HomeScreen(
                                 }
                             },
                         ) {
-                            Icon(Icons.Default.Notifications, contentDescription = null)
+                            Icon(Icons.Default.Apps, contentDescription = null)
                         }
                     },
-                    label = { Text("通知") },
+                    label = { Text("更多") },
                 )
             }
         },
@@ -152,8 +159,11 @@ fun HomeScreen(
                     showBack = false,
                     embedded = true,
                 )
-                3 -> FundStatsScreen(viewModel = marketViewModel)
-                else -> NotificationListScreen(viewModel = notificationViewModel)
+                3 -> SectorTab(viewModel = marketViewModel)
+                else -> MoreTab(
+                    marketViewModel = marketViewModel,
+                    notificationViewModel = notificationViewModel,
+                )
             }
         }
     }

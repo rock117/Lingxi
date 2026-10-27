@@ -26,4 +26,5 @@ pub mod realtime_cache;
 pub mod realtime_store;
 pub mod routes;
 pub mod screen;
+pub mod sector;
 pub mod session;

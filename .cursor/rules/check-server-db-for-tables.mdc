@@ -1,0 +1,13 @@
+---
+description: When a data table is not in this repo, inspect the server PostgreSQL before concluding it is missing.
+alwaysApply: true
+---
+
+# Check server DB for tables
+
+When a task involves database tables (schema, columns, sample data, existence):
+
+1. First check this repo (`migrations/`, entities, SQL in `backend/src`).
+2. If the table is **not** defined or documented here, query the **server PostgreSQL** (credentials from `.env`: `ssh_*`, `deploy_database_url` / remote Docker Postgres). Do **not** assume missing from repo means missing in production.
+3. Only tell the user the table does not exist after confirming it is absent on the server as well.
+4. Never print DB passwords, SSH passwords, API keys, or full connection strings with credentials in chat; redact secrets in outputs.

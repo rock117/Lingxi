@@ -26,6 +26,7 @@ use super::result_cache;
 use crate::ai::AiClient;
 use super::eastmoney::EastmoneyClient;
 use super::fund_stats::{self as fund_stats_svc, FundStatsMeta, FundStatsResult};
+use super::sector::{self as sector_svc, SectorDetailOut, SectorMoversOut};
 use super::fundamentals;
 use super::screen::{self, ScreenExpression, ScreenResult, StrategyDef};
 use super::session;
@@ -167,6 +168,31 @@ pub async fn intraday_alerts(
 #[get("/api/market/strategies")]
 pub async fn strategies() -> Json<Vec<StrategyDef>> {
     Json(screen::strategy_catalog())
+}
+
+/// `GET /api/market/sectors/movers?top_n=10&types=INDUSTRY,CONCEPT` — 当日涨跌幅领涨/领跌。
+#[get("/api/market/sectors/movers?<top_n>&<types>")]
+pub async fn sector_movers(
+    db: &rocket::State<DatabaseConnection>,
+    top_n: Option<usize>,
+    types: Option<&str>,
+) -> AppResult<Json<SectorMoversOut>> {
+    let out = sector_svc::load_movers(db.inner(), top_n, types)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(Json(out))
+}
+
+/// `GET /api/market/sectors/detail?symbol=BK0145.EM` — 板块详情（含 5/10 日涨跌）。
+#[get("/api/market/sectors/detail?<symbol>")]
+pub async fn sector_detail(
+    db: &rocket::State<DatabaseConnection>,
+    symbol: &str,
+) -> AppResult<Json<SectorDetailOut>> {
+    let out = sector_svc::load_detail(db.inner(), symbol)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    out.map(Json).ok_or(AppError::NotFound)
 }
 
 /// `GET /api/market/fund-stats/meta` — 期次选项与默认年份。
