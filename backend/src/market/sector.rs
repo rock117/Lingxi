@@ -35,19 +35,6 @@ pub struct SectorMoversOut {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct SectorBar {
-    pub date: String,
-    pub open: f64,
-    pub high: f64,
-    pub low: f64,
-    pub close: f64,
-    pub pre_close: f64,
-    pub change_pct: f64,
-    pub amount: f64,
-    pub volume: f64,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct SectorConstituentRow {
     pub symbol: String,
     pub name: String,
@@ -77,8 +64,6 @@ pub struct SectorDetailOut {
     pub change_10d_pct: Option<f64>,
     /// 成分股（`sc_sector_constituent`），按当日涨跌幅降序
     pub constituents: Vec<SectorConstituentRow>,
-    /// 近 20 个开市日（升序）
-    pub bars: Vec<SectorBar>,
 }
 
 fn change_pct(close: f64, pre_close: f64) -> f64 {
@@ -329,7 +314,7 @@ SELECT
 FROM sc_sector_kline_d1
 WHERE symbol = $1
 ORDER BY trade_date DESC
-LIMIT 30
+LIMIT 11
 "#,
         [symbol.into()],
     ))
@@ -340,27 +325,9 @@ LIMIT 30
         return Ok(None);
     }
 
-    let bars_desc = krows;
-    let mut bars_asc: Vec<SectorBar> = bars_desc
-        .iter()
-        .take(20)
-        .map(|r| SectorBar {
-            date: r.trade_date.format("%Y-%m-%d").to_string(),
-            open: r.open,
-            high: r.high,
-            low: r.low,
-            close: r.close,
-            pre_close: r.pre_close,
-            change_pct: change_pct(r.close, r.pre_close),
-            amount: r.amount,
-            volume: r.volume,
-        })
-        .collect();
-    bars_asc.reverse();
-
-    let latest = &bars_desc[0];
+    let latest = &krows[0];
     let closes_asc: Vec<f64> = {
-        let mut v: Vec<f64> = bars_desc.iter().map(|r| r.close).collect();
+        let mut v: Vec<f64> = krows.iter().map(|r| r.close).collect();
         v.reverse();
         v
     };
@@ -383,7 +350,6 @@ LIMIT 30
         change_5d_pct: change_nd(&closes_asc, 5),
         change_10d_pct: change_nd(&closes_asc, 10),
         constituents,
-        bars: bars_asc,
     }))
 }
 

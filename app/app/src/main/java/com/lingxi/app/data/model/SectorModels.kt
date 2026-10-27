@@ -27,19 +27,6 @@ data class SectorMovers(
 )
 
 @Serializable
-data class SectorBar(
-    val date: String = "",
-    val open: Double = 0.0,
-    val high: Double = 0.0,
-    val low: Double = 0.0,
-    val close: Double = 0.0,
-    @SerialName("pre_close") val preClose: Double = 0.0,
-    @SerialName("change_pct") val changePct: Double = 0.0,
-    val amount: Double = 0.0,
-    val volume: Double = 0.0,
-)
-
-@Serializable
 data class SectorConstituentRow(
     val symbol: String = "",
     val name: String = "",
@@ -67,5 +54,4 @@ data class SectorDetail(
     @SerialName("change_5d_pct") val change5dPct: Double? = null,
     @SerialName("change_10d_pct") val change10dPct: Double? = null,
     val constituents: List<SectorConstituentRow> = emptyList(),
-    val bars: List<SectorBar> = emptyList(),
 )

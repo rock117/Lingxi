@@ -39,7 +39,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.lingxi.app.data.model.SectorBar
 import com.lingxi.app.data.model.SectorConstituentRow
 import com.lingxi.app.data.model.SectorDetail
 import com.lingxi.app.data.model.SectorMoverRow
@@ -462,23 +461,6 @@ private fun SectorDetailBody(
                 ConstituentRowItem(row = row, onClick = { onOpenStock(row.symbol) })
             }
         }
-        if (d.bars.isNotEmpty()) {
-            item {
-                Text(
-                    "近${d.bars.size}日行情",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            itemsIndexed(d.bars.asReversed()) { idx, bar ->
-                if (idx > 0) {
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                    )
-                }
-                SectorBarRow(bar)
-            }
-        }
     }
 }
 
@@ -549,40 +531,6 @@ private fun DetailGrid(
                 if (row.size == 1) Spacer(modifier = Modifier.weight(1f))
             }
         }
-    }
-}
-
-@Composable
-private fun SectorBarRow(bar: SectorBar) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            bar.date.takeLast(5),
-            modifier = Modifier.weight(1.1f),
-            style = MaterialTheme.typography.bodySmall,
-        )
-        Text(
-            formatPrice(bar.close),
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodySmall,
-        )
-        Text(
-            formatPct(bar.changePct),
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodySmall,
-            color = QuoteColors.of(bar.changePct),
-            fontWeight = FontWeight.Medium,
-        )
-        Text(
-            formatAmount(bar.amount),
-            modifier = Modifier.weight(1.2f),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
