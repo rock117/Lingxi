@@ -178,7 +178,7 @@ GROUP BY sector_symbol
 }
 
 /// 领涨 / 领跌 TopN（按当日涨跌幅）；过滤成分股数 < 20。
-/// 交易时段拉 Miana 板块实时并 UPSERT；非交易时段读当日快照，再回退日 K。
+/// 交易时段拉 Miana 板块实时并 UPSERT；非交易时段先读当日快照，无数据再拉实时并落库，最后回退日 K。
 pub async fn load_movers(
     db: &DatabaseConnection,
     miana: &super::miana::MianaClient,
@@ -218,26 +218,15 @@ pub async fn load_movers(
     let in_session = open_today && super::session::is_realtime_session_now() && miana.token_configured();
 
     let (mut all, trade_date, quote_source) = if in_session {
-        let symbols: Vec<String> = metas.iter().map(|m| m.symbol.clone()).collect();
-        let trade_date = today.format("%Y-%m-%d").to_string();
-        match miana
-            .fetch_sector_realtime_snapshots(&symbols, &trade_date)
-            .await
-        {
-            Ok(snaps) => {
-                if let Err(e) = upsert_sector_realtime(db, &snaps).await {
-                    tracing::warn!(error = %e, "板块实时落库失败，仍用内存截面排序");
-                }
-                let rows = rows_from_realtime(&metas, &counts, &snaps);
-                (rows, trade_date, "realtime".to_string())
-            }
+        match fetch_persist_realtime_movers(db, miana, &metas, &counts, today).await {
+            Ok(v) => v,
             Err(e) => {
                 tracing::warn!(error = %e, "板块实时拉取失败，回退快照/日K");
-                load_movers_offline(db, &metas, &counts, today).await?
+                load_movers_offline(db, miana, &metas, &counts, today).await?
             }
         }
     } else {
-        load_movers_offline(db, &metas, &counts, today).await?
+        load_movers_offline(db, miana, &metas, &counts, today).await?
     };
 
     all.sort_by(|a, b| b.change_pct.total_cmp(&a.change_pct));
@@ -336,14 +325,44 @@ fn rows_from_realtime(
         .collect()
 }
 
+/// 拉 Miana 板块实时 → UPSERT → 组装榜单行。
+async fn fetch_persist_realtime_movers(
+    db: &DatabaseConnection,
+    miana: &super::miana::MianaClient,
+    metas: &[SectorMeta],
+    counts: &HashMap<String, u32>,
+    today: NaiveDate,
+) -> anyhow::Result<(Vec<SectorMoverRow>, String, String)> {
+    let symbols: Vec<String> = metas.iter().map(|m| m.symbol.clone()).collect();
+    let trade_date = today.format("%Y-%m-%d").to_string();
+    let snaps = miana
+        .fetch_sector_realtime_snapshots(&symbols, &trade_date)
+        .await?;
+    if let Err(e) = upsert_sector_realtime(db, &snaps).await {
+        tracing::warn!(error = %e, "板块实时落库失败，仍用内存截面排序");
+    }
+    let rows = rows_from_realtime(metas, counts, &snaps);
+    Ok((rows, trade_date, "realtime".into()))
+}
+
+/// 非交易时段：当日快照 →（无则）实时 API 并落库 → 日 K。
 async fn load_movers_offline(
     db: &DatabaseConnection,
+    miana: &super::miana::MianaClient,
     metas: &[SectorMeta],
     counts: &HashMap<String, u32>,
     today: NaiveDate,
 ) -> anyhow::Result<(Vec<SectorMoverRow>, String, String)> {
     if let Some((td, rows)) = load_movers_from_snapshot(db, metas, counts, today).await? {
         return Ok((rows, td, "snapshot".into()));
+    }
+    if miana.token_configured() {
+        match fetch_persist_realtime_movers(db, miana, metas, counts, today).await {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                tracing::warn!(error = %e, "非交易时段板块实时拉取失败，回退日K");
+            }
+        }
     }
     let (td, rows) = load_movers_from_kline(db, metas, counts).await?;
     Ok((rows, td, "kline".into()))
@@ -638,11 +657,12 @@ ORDER BY symbol, trade_date ASC
     Ok(())
 }
 
-/// 板块详情：当日行情 + 5/10 日涨跌 + 近 20 日 K。
+/// 板块详情：当日行情优先板块实时/快照；5/10 日用日 K（末日可被实时覆盖）；成分股同理。
 pub async fn load_detail(
     db: &DatabaseConnection,
+    miana: &super::miana::MianaClient,
     symbol: &str,
-) -> Result<Option<SectorDetailOut>, DbErr> {
+) -> anyhow::Result<Option<SectorDetailOut>> {
     let symbol = symbol.trim();
     if symbol.is_empty() || symbol.len() > 32 {
         return Ok(None);
@@ -701,48 +721,283 @@ WHERE symbol = $1
 ORDER BY trade_date DESC
 LIMIT 11
 "#,
-        [symbol.into()],
+        [meta.symbol.clone().into()],
     ))
     .all(db)
     .await?;
 
-    if krows.is_empty() {
+    let today = super::session::shanghai_today_naive();
+    let live = resolve_sector_header_quote(db, miana, &meta.symbol, today).await?;
+
+    // 无日 K 且无实时则无法展示
+    if krows.is_empty() && live.is_none() {
         return Ok(None);
     }
 
-    let latest = &krows[0];
-    let closes_asc: Vec<f64> = {
+    let mut closes_asc: Vec<f64> = {
         let mut v: Vec<f64> = krows.iter().map(|r| r.close).collect();
         v.reverse();
         v
     };
 
-    let constituents = load_constituents(db, &meta.symbol).await?;
+    let (
+        trade_date,
+        open,
+        high,
+        low,
+        close,
+        pre_close,
+        amount,
+        volume,
+        change,
+    ) = if let Some(l) = live {
+        if let Some(last) = closes_asc.last_mut() {
+            *last = l.price;
+        } else {
+            closes_asc.push(l.price);
+        }
+        let pre = l.pre_close.filter(|v| *v > 1e-10).unwrap_or(0.0);
+        let chg = l
+            .change_rate
+            .unwrap_or_else(|| change_pct(l.price, pre));
+        (
+            l.trade_date,
+            l.open.unwrap_or(l.price),
+            l.high.unwrap_or(l.price),
+            l.low.unwrap_or(l.price),
+            l.price,
+            pre,
+            l.amount.unwrap_or(0.0),
+            l.volume.unwrap_or(0.0),
+            chg,
+        )
+    } else {
+        let latest = &krows[0];
+        (
+            latest.trade_date.format("%Y-%m-%d").to_string(),
+            latest.open,
+            latest.high,
+            latest.low,
+            latest.close,
+            latest.pre_close,
+            latest.amount,
+            latest.volume,
+            change_pct(latest.close, latest.pre_close),
+        )
+    };
+
+    let constituents = load_constituents(db, miana, &meta.symbol).await?;
 
     Ok(Some(SectorDetailOut {
         symbol: meta.symbol,
         name: meta.name,
         sector_type: meta.sector_type,
-        trade_date: latest.trade_date.format("%Y-%m-%d").to_string(),
-        open: latest.open,
-        high: latest.high,
-        low: latest.low,
-        close: latest.close,
-        pre_close: latest.pre_close,
-        change_pct: change_pct(latest.close, latest.pre_close),
-        amount: latest.amount,
-        volume: latest.volume,
+        trade_date,
+        open,
+        high,
+        low,
+        close,
+        pre_close,
+        change_pct: change,
+        amount,
+        volume,
         change_5d_pct: change_nd(&closes_asc, 5),
         change_10d_pct: change_nd(&closes_asc, 10),
         constituents,
     }))
 }
 
-/// 成分股行情：`sc_sector_constituent` + `sc_stock_kline_d1_bfq`。
+#[derive(Debug, Clone)]
+struct SectorHeaderLive {
+    trade_date: String,
+    price: f64,
+    open: Option<f64>,
+    high: Option<f64>,
+    low: Option<f64>,
+    pre_close: Option<f64>,
+    amount: Option<f64>,
+    volume: Option<f64>,
+    change_rate: Option<f64>,
+}
+
+/// 盘中拉实时并落库；非盘中先读 `sector_realtime_snapshot`，无则再拉实时。
+async fn resolve_sector_header_quote(
+    db: &DatabaseConnection,
+    miana: &super::miana::MianaClient,
+    symbol: &str,
+    today: NaiveDate,
+) -> anyhow::Result<Option<SectorHeaderLive>> {
+    let today_s = today.format("%Y-%m-%d").to_string();
+    let open_today = super::data_source::is_open_trade_day(db, today)
+        .await
+        .unwrap_or(false);
+    let in_session =
+        open_today && super::session::is_realtime_session_now() && miana.token_configured();
+
+    if !in_session {
+        if let Some(snap) = load_one_sector_snapshot(db, symbol, today).await? {
+            return Ok(Some(snap));
+        }
+    }
+
+    if !miana.token_configured() {
+        return Ok(if in_session {
+            None
+        } else {
+            load_one_sector_snapshot(db, symbol, today).await?
+        });
+    }
+
+    match miana
+        .fetch_sector_realtime_snapshots(&[symbol.to_string()], &today_s)
+        .await
+    {
+        Ok(snaps) => {
+            if let Err(e) = upsert_sector_realtime(db, &snaps).await {
+                tracing::warn!(error = %e, "板块详情实时落库失败");
+            }
+            Ok(snaps.into_iter().next().map(|s| SectorHeaderLive {
+                trade_date: s.trade_date,
+                price: s.price,
+                open: s.open,
+                high: s.high,
+                low: s.low,
+                pre_close: s.pre_close,
+                amount: s.amount,
+                volume: s.volume,
+                change_rate: s.change_rate,
+            }))
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "板块详情实时拉取失败，回退快照/日K");
+            Ok(load_one_sector_snapshot(db, symbol, today).await?)
+        }
+    }
+}
+
+async fn load_one_sector_snapshot(
+    db: &DatabaseConnection,
+    symbol: &str,
+    today: NaiveDate,
+) -> Result<Option<SectorHeaderLive>, DbErr> {
+    #[derive(Debug, FromQueryResult)]
+    struct Row {
+        trade_date: NaiveDate,
+        price: f64,
+        open: Option<f64>,
+        high: Option<f64>,
+        low: Option<f64>,
+        pre_close: Option<f64>,
+        amount: Option<f64>,
+        volume: Option<f64>,
+        change_rate: Option<f64>,
+    }
+
+    let row = Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+SELECT
+    trade_date,
+    price,
+    open,
+    high,
+    low,
+    pre_close,
+    amount,
+    volume,
+    change_rate
+FROM sector_realtime_snapshot
+WHERE trade_date = $1
+  AND symbol = $2
+LIMIT 1
+"#,
+        [today.into(), symbol.into()],
+    ))
+    .one(db)
+    .await?;
+
+    Ok(row.filter(|r| r.price > 0.0).map(|r| SectorHeaderLive {
+        trade_date: r.trade_date.format("%Y-%m-%d").to_string(),
+        price: r.price,
+        open: r.open,
+        high: r.high,
+        low: r.low,
+        pre_close: r.pre_close,
+        amount: r.amount,
+        volume: r.volume,
+        change_rate: r.change_rate,
+    }))
+}
+
+#[derive(Debug, Clone)]
+struct LiveQuote {
+    price: f64,
+    pre_close: f64,
+    amount: f64,
+    change_rate: Option<f64>,
+}
+
+/// 当日各标的最新一条 `market_realtime_snapshot`。
+async fn load_latest_stock_realtime(
+    db: &DatabaseConnection,
+    symbols: &[String],
+    trade_date: &str,
+) -> Result<HashMap<String, LiveQuote>, DbErr> {
+    if symbols.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    #[derive(Debug, FromQueryResult)]
+    struct Row {
+        symbol: String,
+        price: f64,
+        pre_close: Option<f64>,
+        amount: Option<f64>,
+        change_rate: Option<f64>,
+    }
+
+    let rows = Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+SELECT DISTINCT ON (symbol)
+    symbol,
+    price,
+    pre_close,
+    amount,
+    change_rate
+FROM market_realtime_snapshot
+WHERE trade_date = $1
+  AND symbol = ANY($2)
+ORDER BY symbol, quote_ts DESC
+"#,
+        [trade_date.into(), symbols.to_vec().into()],
+    ))
+    .all(db)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .filter(|r| r.price > 0.0)
+        .map(|r| {
+            (
+                r.symbol,
+                LiveQuote {
+                    price: r.price,
+                    pre_close: r.pre_close.filter(|v| *v > 1e-10).unwrap_or(0.0),
+                    amount: r.amount.unwrap_or(0.0),
+                    change_rate: r.change_rate,
+                },
+            )
+        })
+        .collect())
+}
+
+/// 成分股行情：现价优先 `market_realtime_snapshot` / Miana；5/10 日用日 K（末日可用实时价覆盖）。
 async fn load_constituents(
     db: &DatabaseConnection,
+    miana: &super::miana::MianaClient,
     sector_symbol: &str,
-) -> Result<Vec<SectorConstituentRow>, DbErr> {
+) -> anyhow::Result<Vec<SectorConstituentRow>> {
     #[derive(Debug, FromQueryResult)]
     struct Mem {
         stock_symbol: String,
@@ -820,7 +1075,7 @@ FROM (
 WHERE rn <= 11
 ORDER BY symbol, trade_date ASC
 "#,
-        [symbols.into()],
+        [symbols.clone().into()],
     ))
     .all(db)
     .await?;
@@ -830,19 +1085,94 @@ ORDER BY symbol, trade_date ASC
         closes_map.entry(r.symbol).or_default().push(r.close);
     }
 
+    let today = super::session::shanghai_today();
+    let today_d = super::session::shanghai_today_naive();
+    let open_today = super::data_source::is_open_trade_day(db, today_d)
+        .await
+        .unwrap_or(false);
+    let in_session =
+        open_today && super::session::is_realtime_session_now() && miana.token_configured();
+
+    let mut live = load_latest_stock_realtime(db, &symbols, &today).await?;
+
+    let missing: Vec<String> = symbols
+        .iter()
+        .filter(|s| !live.contains_key(s.as_str()))
+        .cloned()
+        .collect();
+    let should_fetch = miana.token_configured()
+        && (in_session || live.is_empty() || !missing.is_empty());
+    if should_fetch {
+        let to_fetch = if in_session || live.is_empty() {
+            symbols.clone()
+        } else {
+            missing
+        };
+        if !to_fetch.is_empty() {
+            match miana.fetch_realtime_snapshots(&to_fetch, &today).await {
+                Ok(snaps) => {
+                    if let Err(e) = super::realtime_store::insert_snapshots(db, &snaps).await {
+                        tracing::warn!(error = %e, "成分股实时落库失败，仍用内存截面");
+                    }
+                    for s in snaps {
+                        if s.price <= 0.0 {
+                            continue;
+                        }
+                        live.insert(
+                            s.symbol,
+                            LiveQuote {
+                                price: s.price,
+                                pre_close: s.pre_close.filter(|v| *v > 1e-10).unwrap_or(0.0),
+                                amount: s.amount.unwrap_or(0.0),
+                                change_rate: s.change_rate,
+                            },
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "成分股实时拉取失败，回退快照/日K");
+                }
+            }
+        }
+    }
+
     let mut out: Vec<SectorConstituentRow> = members
         .into_iter()
         .map(|m| {
-            let q = quote_map.get(&m.stock_symbol);
-            let closes = closes_map.get(&m.stock_symbol);
+            let live_q = live.get(&m.stock_symbol);
+            let kq = quote_map.get(&m.stock_symbol);
+            let (close, change_pct, amount) = if let Some(l) = live_q {
+                let chg = l
+                    .change_rate
+                    .unwrap_or_else(|| change_pct(l.price, l.pre_close));
+                (Some(l.price), Some(chg), Some(l.amount))
+            } else if let Some(q) = kq {
+                (
+                    Some(q.close),
+                    Some(change_pct(q.close, q.pre_close)),
+                    Some(q.amount),
+                )
+            } else {
+                (None, None, None)
+            };
+
+            let mut closes = closes_map.get(&m.stock_symbol).cloned().unwrap_or_default();
+            if let Some(px) = close {
+                if let Some(last) = closes.last_mut() {
+                    *last = px;
+                } else {
+                    closes.push(px);
+                }
+            }
+
             SectorConstituentRow {
                 symbol: m.stock_symbol,
                 name: m.name,
-                close: q.map(|x| x.close),
-                change_pct: q.map(|x| change_pct(x.close, x.pre_close)),
-                change_5d_pct: closes.and_then(|c| change_nd(c, 5)),
-                change_10d_pct: closes.and_then(|c| change_nd(c, 10)),
-                amount: q.map(|x| x.amount),
+                close,
+                change_pct,
+                change_5d_pct: change_nd(&closes, 5),
+                change_10d_pct: change_nd(&closes, 10),
+                amount,
             }
         })
         .collect();

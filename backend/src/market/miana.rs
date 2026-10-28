@@ -1,7 +1,7 @@
 //! Miana 实时行情客户端。
 //!
 //! - 个股：`GET /api/stock/v3/realtime`（单次最多 20 支）
-//! - 板块：`GET /api/sector/v3/realtime`（单次最多 50 个，见 SecuritiesCollector `docs/miana-api.md`）
+//! - 板块：`GET /api/sector/v3/realtime`（账号实际单次最多 20；文档或写 50）
 //!
 //! 全局限流默认约 480 次/分钟。非企业版：不用 `/realtimemarket`。
 
@@ -20,7 +20,8 @@ use super::rate_limit::RateLimiter;
 use crate::config::AppConfig;
 
 const STOCK_BATCH_SIZE: usize = 20;
-const SECTOR_BATCH_SIZE: usize = 50;
+/// 文档写板块单批最多 50，但当前账号实际返回「一次最多查询20个代码」，与个股同限。
+const SECTOR_BATCH_SIZE: usize = 20;
 
 #[derive(Clone)]
 pub struct MianaClient {

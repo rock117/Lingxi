@@ -171,7 +171,7 @@ pub async fn strategies() -> Json<Vec<StrategyDef>> {
 }
 
 /// `GET /api/market/sectors/movers?top_n=10&types=INDUSTRY,CONCEPT` — 当日涨跌幅领涨/领跌。
-/// 连续竞价时段拉 Miana 板块实时并落库；非交易时段读当日快照，再回退日 K。
+/// 连续竞价时段拉 Miana 板块实时并落库；非交易时段先读当日快照，无则拉实时并落库，再回退日 K。
 #[get("/api/market/sectors/movers?<top_n>&<types>")]
 pub async fn sector_movers(
     db: &rocket::State<DatabaseConnection>,
@@ -186,14 +186,16 @@ pub async fn sector_movers(
 }
 
 /// `GET /api/market/sectors/detail?symbol=BK0145.EM` — 板块详情（含 5/10 日涨跌）。
+/// 成分股现价优先盘中实时（`market_realtime_snapshot` / Miana），5/10 日仍用日 K。
 #[get("/api/market/sectors/detail?<symbol>")]
 pub async fn sector_detail(
     db: &rocket::State<DatabaseConnection>,
+    miana: &rocket::State<MianaClient>,
     symbol: &str,
 ) -> AppResult<Json<SectorDetailOut>> {
-    let out = sector_svc::load_detail(db.inner(), symbol)
+    let out = sector_svc::load_detail(db.inner(), miana.inner(), symbol)
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(AppError::Internal)?;
     out.map(Json).ok_or(AppError::NotFound)
 }
 

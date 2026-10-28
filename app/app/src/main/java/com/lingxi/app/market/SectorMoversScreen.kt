@@ -360,7 +360,7 @@ private fun SectorDetailBody(
                     DetailGrid(
                         listOf(
                             "涨跌幅" to formatPct(d.changePct),
-                            "收盘" to formatPrice(d.close),
+                            "现价" to formatPrice(d.close),
                             "开盘" to formatPrice(d.open),
                             "最高" to formatPrice(d.high),
                             "最低" to formatPrice(d.low),
