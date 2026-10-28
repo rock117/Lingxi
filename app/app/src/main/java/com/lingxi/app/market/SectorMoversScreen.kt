@@ -103,7 +103,7 @@ fun SectorMoversScreen(
                 )
                 Text(
                     buildString {
-                        append("按当日涨跌 · 行业/概念 Top10")
+                        append("按当日涨跌 · 成分≥20 · 行业/概念 Top10")
                         ui.data?.tradeDate?.takeIf { it.isNotBlank() }?.let {
                             append(" · $it")
                         }
@@ -253,7 +253,13 @@ private fun SectorMoverRowItem(
         Column(modifier = Modifier.weight(1f)) {
             Text(row.name.ifBlank { row.symbol }, fontWeight = FontWeight.Medium)
             Text(
-                "${typeLabel(row.sectorType)} · ${formatAmount(row.amount)}",
+                buildString {
+                    append(typeLabel(row.sectorType))
+                    if (row.constituentCount > 0) {
+                        append(" · ${row.constituentCount}只")
+                    }
+                    append(" · ${formatAmount(row.amount)}")
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

@@ -1,7 +1,10 @@
 //! 板块榜 / 详情：读 `sc_sector` + `sc_sector_kline_d1`。
 //! 当日涨跌幅表内无独立字段，用 `(close/pre_close - 1)*100` 计算。
+//! 成分股数量来自 `sc_sector_constituent`，进程内缓存 12 小时。
 
 use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use chrono::NaiveDate;
 use sea_orm::{DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
@@ -9,6 +12,9 @@ use serde::Serialize;
 
 const DEFAULT_TYPES: &[&str] = &["INDUSTRY", "CONCEPT"];
 const DEFAULT_TOP_N: usize = 10;
+/// 榜单最少成分股数（不足则过滤）
+const MIN_CONSTITUENT_COUNT: u32 = 20;
+const CONSTITUENT_COUNT_TTL: Duration = Duration::from_secs(12 * 3600);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SectorMoverRow {
@@ -22,6 +28,8 @@ pub struct SectorMoverRow {
     pub pre_close: f64,
     pub amount: f64,
     pub volume: f64,
+    /// 成分股数量（`sc_sector_constituent`）
+    pub constituent_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -100,7 +108,74 @@ fn parse_types(raw: Option<&str>) -> Vec<String> {
     }
 }
 
-/// 领涨 / 领跌 TopN（按当日涨跌幅）。
+struct ConstituentCountCache {
+    loaded_at: Instant,
+    /// sector_symbol → 成分股数
+    counts: HashMap<String, u32>,
+}
+
+fn constituent_count_cache() -> &'static Mutex<Option<ConstituentCountCache>> {
+    static C: OnceLock<Mutex<Option<ConstituentCountCache>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(None))
+}
+
+fn cache_get_constituent_counts() -> Option<HashMap<String, u32>> {
+    let g = constituent_count_cache().lock().ok()?;
+    let c = g.as_ref()?;
+    if c.loaded_at.elapsed() > CONSTITUENT_COUNT_TTL {
+        return None;
+    }
+    Some(c.counts.clone())
+}
+
+fn cache_put_constituent_counts(counts: HashMap<String, u32>) {
+    if let Ok(mut g) = constituent_count_cache().lock() {
+        *g = Some(ConstituentCountCache {
+            loaded_at: Instant::now(),
+            counts,
+        });
+    }
+}
+
+async fn load_constituent_counts(
+    db: &DatabaseConnection,
+) -> Result<HashMap<String, u32>, DbErr> {
+    if let Some(hit) = cache_get_constituent_counts() {
+        return Ok(hit);
+    }
+
+    #[derive(Debug, FromQueryResult)]
+    struct Cnt {
+        sector_symbol: String,
+        n: i64,
+    }
+
+    let rows = Cnt::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+SELECT sector_symbol, COUNT(*)::bigint AS n
+FROM sc_sector_constituent
+GROUP BY sector_symbol
+"#,
+        [],
+    ))
+    .all(db)
+    .await?;
+
+    let counts: HashMap<String, u32> = rows
+        .into_iter()
+        .map(|r| (r.sector_symbol, r.n.max(0) as u32))
+        .collect();
+    cache_put_constituent_counts(counts.clone());
+    tracing::info!(
+        sectors = counts.len(),
+        ttl_secs = CONSTITUENT_COUNT_TTL.as_secs(),
+        "板块成分股数量已缓存"
+    );
+    Ok(counts)
+}
+
+/// 领涨 / 领跌 TopN（按当日涨跌幅）；过滤成分股数 < 20。
 pub async fn load_movers(
     db: &DatabaseConnection,
     top_n: Option<usize>,
@@ -117,6 +192,8 @@ pub async fn load_movers(
             losers: vec![],
         });
     }
+
+    let counts = load_constituent_counts(db).await?;
 
     #[derive(Debug, FromQueryResult)]
     struct Row {
@@ -167,17 +244,24 @@ WHERE s.sector_type = ANY($1)
 
     let mut all: Vec<SectorMoverRow> = rows
         .into_iter()
-        .map(|r| SectorMoverRow {
-            change_pct: change_pct(r.close, r.pre_close),
-            change_5d_pct: None,
-            change_10d_pct: None,
-            symbol: r.symbol,
-            name: r.name,
-            sector_type: r.sector_type,
-            close: r.close,
-            pre_close: r.pre_close,
-            amount: r.amount,
-            volume: r.volume,
+        .filter_map(|r| {
+            let constituent_count = *counts.get(&r.symbol).unwrap_or(&0);
+            if constituent_count < MIN_CONSTITUENT_COUNT {
+                return None;
+            }
+            Some(SectorMoverRow {
+                change_pct: change_pct(r.close, r.pre_close),
+                change_5d_pct: None,
+                change_10d_pct: None,
+                symbol: r.symbol,
+                name: r.name,
+                sector_type: r.sector_type,
+                close: r.close,
+                pre_close: r.pre_close,
+                amount: r.amount,
+                volume: r.volume,
+                constituent_count,
+            })
         })
         .collect();
 

@@ -15,6 +15,7 @@ data class SectorMoverRow(
     @SerialName("pre_close") val preClose: Double = 0.0,
     val amount: Double = 0.0,
     val volume: Double = 0.0,
+    @SerialName("constituent_count") val constituentCount: Int = 0,
 )
 
 @Serializable
