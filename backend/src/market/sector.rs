@@ -7,7 +7,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use chrono::NaiveDate;
-use sea_orm::{DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
 use serde::Serialize;
 
 const DEFAULT_TYPES: &[&str] = &["INDUSTRY", "CONCEPT"];
@@ -38,6 +38,8 @@ pub struct SectorMoversOut {
     pub top_n: usize,
     /// 参与排序的 sector_type
     pub types: Vec<String>,
+    /// `realtime` | `snapshot` | `kline`
+    pub quote_source: String,
     pub gainers: Vec<SectorMoverRow>,
     pub losers: Vec<SectorMoverRow>,
 }
@@ -176,11 +178,13 @@ GROUP BY sector_symbol
 }
 
 /// 领涨 / 领跌 TopN（按当日涨跌幅）；过滤成分股数 < 20。
+/// 交易时段拉 Miana 板块实时并 UPSERT；非交易时段读当日快照，再回退日 K。
 pub async fn load_movers(
     db: &DatabaseConnection,
+    miana: &super::miana::MianaClient,
     top_n: Option<usize>,
     types: Option<&str>,
-) -> Result<SectorMoversOut, DbErr> {
+) -> anyhow::Result<SectorMoversOut> {
     let top_n = top_n.unwrap_or(DEFAULT_TOP_N).clamp(1, 50);
     let types = parse_types(types);
     if types.is_empty() {
@@ -188,13 +192,249 @@ pub async fn load_movers(
             trade_date: String::new(),
             top_n,
             types,
+            quote_source: "kline".into(),
             gainers: vec![],
             losers: vec![],
         });
     }
 
     let counts = load_constituent_counts(db).await?;
+    let metas = load_eligible_sector_meta(db, &types, &counts).await?;
+    if metas.is_empty() {
+        return Ok(SectorMoversOut {
+            trade_date: String::new(),
+            top_n,
+            types,
+            quote_source: "kline".into(),
+            gainers: vec![],
+            losers: vec![],
+        });
+    }
 
+    let today = super::session::shanghai_today_naive();
+    let open_today = super::data_source::is_open_trade_day(db, today)
+        .await
+        .unwrap_or(false);
+    let in_session = open_today && super::session::is_realtime_session_now() && miana.token_configured();
+
+    let (mut all, trade_date, quote_source) = if in_session {
+        let symbols: Vec<String> = metas.iter().map(|m| m.symbol.clone()).collect();
+        let trade_date = today.format("%Y-%m-%d").to_string();
+        match miana
+            .fetch_sector_realtime_snapshots(&symbols, &trade_date)
+            .await
+        {
+            Ok(snaps) => {
+                if let Err(e) = upsert_sector_realtime(db, &snaps).await {
+                    tracing::warn!(error = %e, "板块实时落库失败，仍用内存截面排序");
+                }
+                let rows = rows_from_realtime(&metas, &counts, &snaps);
+                (rows, trade_date, "realtime".to_string())
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "板块实时拉取失败，回退快照/日K");
+                load_movers_offline(db, &metas, &counts, today).await?
+            }
+        }
+    } else {
+        load_movers_offline(db, &metas, &counts, today).await?
+    };
+
+    all.sort_by(|a, b| b.change_pct.total_cmp(&a.change_pct));
+    let mut gainers: Vec<_> = all.iter().take(top_n).cloned().collect();
+    let mut by_asc = all;
+    by_asc.sort_by(|a, b| a.change_pct.total_cmp(&b.change_pct));
+    let mut losers: Vec<_> = by_asc.into_iter().take(top_n).collect();
+
+    fill_nd_changes(db, &mut gainers).await?;
+    fill_nd_changes(db, &mut losers).await?;
+
+    Ok(SectorMoversOut {
+        trade_date,
+        top_n,
+        types,
+        quote_source,
+        gainers,
+        losers,
+    })
+}
+
+#[derive(Debug, Clone)]
+struct SectorMeta {
+    symbol: String,
+    name: String,
+    sector_type: String,
+}
+
+async fn load_eligible_sector_meta(
+    db: &DatabaseConnection,
+    types: &[String],
+    counts: &HashMap<String, u32>,
+) -> Result<Vec<SectorMeta>, DbErr> {
+    #[derive(Debug, FromQueryResult)]
+    struct Row {
+        symbol: String,
+        name: String,
+        sector_type: String,
+    }
+    let rows = Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+SELECT symbol, name, sector_type
+FROM sc_sector
+WHERE is_active = TRUE
+  AND sector_type = ANY($1)
+"#,
+        [types.to_vec().into()],
+    ))
+    .all(db)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .filter(|r| *counts.get(&r.symbol).unwrap_or(&0) >= MIN_CONSTITUENT_COUNT)
+        .map(|r| SectorMeta {
+            symbol: r.symbol,
+            name: r.name,
+            sector_type: r.sector_type,
+        })
+        .collect())
+}
+
+fn rows_from_realtime(
+    metas: &[SectorMeta],
+    counts: &HashMap<String, u32>,
+    snaps: &[super::miana::SectorRealtimeSnapshot],
+) -> Vec<SectorMoverRow> {
+    let by_sym: HashMap<&str, &super::miana::SectorRealtimeSnapshot> =
+        snaps.iter().map(|s| (s.symbol.as_str(), s)).collect();
+    metas
+        .iter()
+        .filter_map(|m| {
+            let s = by_sym.get(m.symbol.as_str())?;
+            let pre = s.pre_close.filter(|v| *v > 1e-10).unwrap_or(0.0);
+            let chg = s
+                .change_rate
+                .unwrap_or_else(|| change_pct(s.price, pre));
+            Some(SectorMoverRow {
+                symbol: m.symbol.clone(),
+                name: s.name.clone().unwrap_or_else(|| m.name.clone()),
+                sector_type: s
+                    .sector_type
+                    .clone()
+                    .unwrap_or_else(|| m.sector_type.clone()),
+                change_pct: chg,
+                change_5d_pct: None,
+                change_10d_pct: None,
+                close: s.price,
+                pre_close: pre,
+                amount: s.amount.unwrap_or(0.0),
+                volume: s.volume.unwrap_or(0.0),
+                constituent_count: *counts.get(&m.symbol).unwrap_or(&0),
+            })
+        })
+        .collect()
+}
+
+async fn load_movers_offline(
+    db: &DatabaseConnection,
+    metas: &[SectorMeta],
+    counts: &HashMap<String, u32>,
+    today: NaiveDate,
+) -> anyhow::Result<(Vec<SectorMoverRow>, String, String)> {
+    if let Some((td, rows)) = load_movers_from_snapshot(db, metas, counts, today).await? {
+        return Ok((rows, td, "snapshot".into()));
+    }
+    let (td, rows) = load_movers_from_kline(db, metas, counts).await?;
+    Ok((rows, td, "kline".into()))
+}
+
+async fn load_movers_from_snapshot(
+    db: &DatabaseConnection,
+    metas: &[SectorMeta],
+    counts: &HashMap<String, u32>,
+    today: NaiveDate,
+) -> Result<Option<(String, Vec<SectorMoverRow>)>, DbErr> {
+    #[derive(Debug, FromQueryResult)]
+    struct Row {
+        trade_date: NaiveDate,
+        symbol: String,
+        name: Option<String>,
+        sector_type: Option<String>,
+        price: f64,
+        pre_close: Option<f64>,
+        amount: Option<f64>,
+        volume: Option<f64>,
+        change_rate: Option<f64>,
+    }
+
+    let meta_by: HashMap<&str, &SectorMeta> =
+        metas.iter().map(|m| (m.symbol.as_str(), m)).collect();
+    let symbols: Vec<String> = metas.iter().map(|m| m.symbol.clone()).collect();
+    if symbols.is_empty() {
+        return Ok(None);
+    }
+
+    let rows = Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+SELECT
+    trade_date,
+    symbol,
+    name,
+    sector_type,
+    price,
+    pre_close,
+    amount,
+    volume,
+    change_rate
+FROM sector_realtime_snapshot
+WHERE trade_date = $1
+  AND symbol = ANY($2)
+"#,
+        [today.into(), symbols.into()],
+    ))
+    .all(db)
+    .await?;
+
+    if rows.is_empty() {
+        return Ok(None);
+    }
+
+    let trade_date = rows[0].trade_date.format("%Y-%m-%d").to_string();
+    let out: Vec<SectorMoverRow> = rows
+        .into_iter()
+        .filter_map(|r| {
+            let m = meta_by.get(r.symbol.as_str())?;
+            let pre = r.pre_close.filter(|v| *v > 1e-10).unwrap_or(0.0);
+            let chg = r.change_rate.unwrap_or_else(|| change_pct(r.price, pre));
+            Some(SectorMoverRow {
+                symbol: r.symbol.clone(),
+                name: r.name.unwrap_or_else(|| m.name.clone()),
+                sector_type: r.sector_type.unwrap_or_else(|| m.sector_type.clone()),
+                change_pct: chg,
+                change_5d_pct: None,
+                change_10d_pct: None,
+                close: r.price,
+                pre_close: pre,
+                amount: r.amount.unwrap_or(0.0),
+                volume: r.volume.unwrap_or(0.0),
+                constituent_count: *counts.get(&r.symbol).unwrap_or(&0),
+            })
+        })
+        .collect();
+    if out.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some((trade_date, out)))
+    }
+}
+
+async fn load_movers_from_kline(
+    db: &DatabaseConnection,
+    metas: &[SectorMeta],
+    counts: &HashMap<String, u32>,
+) -> Result<(String, Vec<SectorMoverRow>), DbErr> {
     #[derive(Debug, FromQueryResult)]
     struct Row {
         trade_date: NaiveDate,
@@ -207,7 +447,10 @@ pub async fn load_movers(
         volume: f64,
     }
 
-    let sql = r#"
+    let symbols: Vec<String> = metas.iter().map(|m| m.symbol.clone()).collect();
+    let rows = Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
 WITH latest AS (
     SELECT MAX(trade_date) AS d FROM sc_sector_kline_d1
 )
@@ -225,14 +468,10 @@ INNER JOIN latest l ON k.trade_date = l.d
 INNER JOIN sc_sector s
     ON s.symbol = k.symbol
    AND s.is_active = TRUE
-WHERE s.sector_type = ANY($1)
+WHERE k.symbol = ANY($1)
   AND k.pre_close > 0
-"#;
-
-    let rows = Row::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        sql,
-        [types.clone().into()],
+"#,
+        [symbols.into()],
     ))
     .all(db)
     .await?;
@@ -241,46 +480,108 @@ WHERE s.sector_type = ANY($1)
         .first()
         .map(|r| r.trade_date.format("%Y-%m-%d").to_string())
         .unwrap_or_default();
-
-    let mut all: Vec<SectorMoverRow> = rows
+    let out = rows
         .into_iter()
-        .filter_map(|r| {
-            let constituent_count = *counts.get(&r.symbol).unwrap_or(&0);
-            if constituent_count < MIN_CONSTITUENT_COUNT {
-                return None;
-            }
-            Some(SectorMoverRow {
-                change_pct: change_pct(r.close, r.pre_close),
-                change_5d_pct: None,
-                change_10d_pct: None,
-                symbol: r.symbol,
-                name: r.name,
-                sector_type: r.sector_type,
-                close: r.close,
-                pre_close: r.pre_close,
-                amount: r.amount,
-                volume: r.volume,
-                constituent_count,
-            })
+        .map(|r| SectorMoverRow {
+            change_pct: change_pct(r.close, r.pre_close),
+            change_5d_pct: None,
+            change_10d_pct: None,
+            symbol: r.symbol.clone(),
+            name: r.name,
+            sector_type: r.sector_type,
+            close: r.close,
+            pre_close: r.pre_close,
+            amount: r.amount,
+            volume: r.volume,
+            constituent_count: *counts.get(&r.symbol).unwrap_or(&0),
         })
         .collect();
+    Ok((trade_date, out))
+}
 
-    all.sort_by(|a, b| b.change_pct.total_cmp(&a.change_pct));
-    let mut gainers: Vec<_> = all.iter().take(top_n).cloned().collect();
-    let mut by_asc = all;
-    by_asc.sort_by(|a, b| a.change_pct.total_cmp(&b.change_pct));
-    let mut losers: Vec<_> = by_asc.into_iter().take(top_n).collect();
+async fn upsert_sector_realtime(
+    db: &DatabaseConnection,
+    snaps: &[super::miana::SectorRealtimeSnapshot],
+) -> Result<(), DbErr> {
+    for chunk in snaps.chunks(80) {
+        let mut values = String::new();
+        let mut params: Vec<sea_orm::Value> = Vec::new();
+        for (i, s) in chunk.iter().enumerate() {
+            if i > 0 {
+                values.push(',');
+            }
+            let base = i * 16;
+            values.push_str(&format!(
+                "(${},${},${},${},${},${},${},${},${},${},${},${},${},${},${},${}::timestamptz)",
+                base + 1,
+                base + 2,
+                base + 3,
+                base + 4,
+                base + 5,
+                base + 6,
+                base + 7,
+                base + 8,
+                base + 9,
+                base + 10,
+                base + 11,
+                base + 12,
+                base + 13,
+                base + 14,
+                base + 15,
+                base + 16,
+            ));
+            let td = NaiveDate::parse_from_str(&s.trade_date, "%Y-%m-%d")
+                .unwrap_or_else(|_| super::session::shanghai_today_naive());
+            params.push(s.symbol.clone().into());
+            params.push(td.into());
+            params.push(s.name.clone().into());
+            params.push(s.sector_type.clone().into());
+            params.push(s.price.into());
+            params.push(s.open.into());
+            params.push(s.high.into());
+            params.push(s.low.into());
+            params.push(s.pre_close.into());
+            params.push(s.volume.into());
+            params.push(s.amount.into());
+            params.push(s.change_amt.into());
+            params.push(s.change_rate.into());
+            params.push(s.quote_ts.into());
+            params.push(s.local_date.clone().into());
+            params.push(s.fetched_at.clone().into());
+        }
 
-    fill_nd_changes(db, &mut gainers).await?;
-    fill_nd_changes(db, &mut losers).await?;
+        let sql = format!(
+            r#"
+INSERT INTO sector_realtime_snapshot (
+    symbol, trade_date, name, sector_type, price, open, high, low, pre_close,
+    volume, amount, change_amt, change_rate, quote_ts, local_date, fetched_at
+) VALUES {values}
+ON CONFLICT (symbol, trade_date) DO UPDATE SET
+    name = EXCLUDED.name,
+    sector_type = EXCLUDED.sector_type,
+    price = EXCLUDED.price,
+    open = EXCLUDED.open,
+    high = EXCLUDED.high,
+    low = EXCLUDED.low,
+    pre_close = EXCLUDED.pre_close,
+    volume = EXCLUDED.volume,
+    amount = EXCLUDED.amount,
+    change_amt = EXCLUDED.change_amt,
+    change_rate = EXCLUDED.change_rate,
+    quote_ts = EXCLUDED.quote_ts,
+    local_date = EXCLUDED.local_date,
+    fetched_at = EXCLUDED.fetched_at
+"#
+        );
 
-    Ok(SectorMoversOut {
-        trade_date,
-        top_n,
-        types,
-        gainers,
-        losers,
-    })
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            &sql,
+            params,
+        ))
+        .await?;
+    }
+    Ok(())
 }
 
 /// 仅为榜单内标的补 5/10 日涨跌（避免全市场扫 K）。

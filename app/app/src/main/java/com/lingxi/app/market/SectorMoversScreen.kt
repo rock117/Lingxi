@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -146,12 +147,6 @@ fun SectorMoversScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "#",
-                modifier = Modifier.padding(end = 12.dp),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
                 "板块",
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.labelSmall,
@@ -216,9 +211,8 @@ fun SectorMoversScreen(
                         )
                     }
                 }
-                itemsIndexed(rows) { idx, row ->
+                items(rows) { row ->
                     SectorMoverRowItem(
-                        rank = idx + 1,
                         row = row,
                         onClick = { onOpenSector(row.symbol) },
                     )
@@ -233,7 +227,6 @@ fun SectorMoversScreen(
 
 @Composable
 private fun SectorMoverRowItem(
-    rank: Int,
     row: SectorMoverRow,
     onClick: () -> Unit,
 ) {
@@ -244,12 +237,6 @@ private fun SectorMoverRowItem(
             .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            "$rank",
-            modifier = Modifier.padding(end = 12.dp),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
         Column(modifier = Modifier.weight(1f)) {
             Text(row.name.ifBlank { row.symbol }, fontWeight = FontWeight.Medium)
             Text(

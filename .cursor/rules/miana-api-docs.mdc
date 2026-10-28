@@ -1,0 +1,12 @@
+---
+description: For any https://miana.com.cn/api usage, read SecuritiesCollector Miana API docs first.
+alwaysApply: true
+---
+
+# Miana API documentation
+
+Whenever implementing, changing, or debugging calls to `https://miana.com.cn/api` (or `MIANA_BASE_URL` equivalents):
+
+1. **Read** `C:\rock\coding\code\my\MyApp\SecuritiesCollector\docs\miana-api.md` (or the same relative path from the SecuritiesCollector repo) for path, params, limits, and response fields.
+2. Do **not** invent endpoints or field names from memory; match that document.
+3. Respect documented batch limits (e.g. sector realtime max 50 symbols) and existing Lingxi rate limiting (`MIANA_RATE_LIMIT_PER_MIN`).

@@ -171,15 +171,17 @@ pub async fn strategies() -> Json<Vec<StrategyDef>> {
 }
 
 /// `GET /api/market/sectors/movers?top_n=10&types=INDUSTRY,CONCEPT` — 当日涨跌幅领涨/领跌。
+/// 连续竞价时段拉 Miana 板块实时并落库；非交易时段读当日快照，再回退日 K。
 #[get("/api/market/sectors/movers?<top_n>&<types>")]
 pub async fn sector_movers(
     db: &rocket::State<DatabaseConnection>,
+    miana: &rocket::State<MianaClient>,
     top_n: Option<usize>,
     types: Option<&str>,
 ) -> AppResult<Json<SectorMoversOut>> {
-    let out = sector_svc::load_movers(db.inner(), top_n, types)
+    let out = sector_svc::load_movers(db.inner(), miana.inner(), top_n, types)
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(AppError::Internal)?;
     Ok(Json(out))
 }
 

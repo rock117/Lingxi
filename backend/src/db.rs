@@ -4,6 +4,7 @@ use tracing::info;
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/20260721000001_init.sql"),
     include_str!("../migrations/20261014000001_market_realtime_snapshot.sql"),
+    include_str!("../migrations/20261028000001_sector_realtime_snapshot.sql"),
 ];
 
 /// 初始化 PostgreSQL 连接，并确保 schema 已就绪。
