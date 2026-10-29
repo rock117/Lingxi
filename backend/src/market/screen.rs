@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::board_limit::near_either_limit;
 use super::domain::{MarketDataInput, StockDailyData};
 use super::fundamentals::{BalanceSnapshot, CashflowSnapshot, IncomeSnapshot};
 use super::indicators::rsi_series;
@@ -18,7 +19,6 @@ pub struct FundMaps<'a> {
 }
 
 const AMOUNT_MIN: f64 = 3.0e7;
-const LIMIT_PCT: f64 = 9.5;
 const LOOKBACK_DAYS: usize = 120;
 
 /// 策略参数字段（供 App 动态表单）。
@@ -594,7 +594,7 @@ pub fn run_screen_with_fundamentals(
 
 fn universe_ok(s: &StockDailyData) -> bool {
     s.amount >= AMOUNT_MIN
-        && s.change_pct.abs() < LIMIT_PCT
+        && !near_either_limit(&s.symbol, s.change_pct)
         && s.close_price > 0.0
         && s.open > 0.0
 }

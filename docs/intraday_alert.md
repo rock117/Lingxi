@@ -38,7 +38,7 @@
 |---|---|---|
 | `AMOUNT_MIN` | `3e7` | 成交额下限（元） |
 | `PRESELECT_K` | `150` | 初筛上限 |
-| `LIMIT_PCT` | `9.5` | 近涨停/近跌停近似阈值（买不进） |
+| 近涨跌停 | 按板块 | 主板约 ±9.5 / 科创创业 ±19.5 / 北交 ±29.5（板幅 −0.5）；见 `board_limit` |
 | `SCORE_MIN` | `55` | 上涨趋势 Top10 最低分 |
 | `SCORE_MIN_OVERSOLD` | `40` | 超跌 Top10 最低分 |
 | `DELTA_MIN` | `1.2` | 相对大盘最少超额/弱势（百分点） |
@@ -54,7 +54,7 @@
 | `TODAY_CHANGE_MAX` | `2` | 路径 1：当日实盘涨跌须 **≤** 此值 |
 | `VOL_SPIKE_RATIO` | `2.0` | 相对此前均额放量倍数 |
 
-大盘 \(R_{mkt}\)：有效样本等权均涨跌幅（**不含** \(R_i \ge LIMIT_PCT\) 或 \(R_i \le -LIMIT_PCT\)）。
+大盘 \(R_{mkt}\)：有效样本等权均涨跌幅（**不含**已接近该票所属板块涨跌停者）。
 
 基础有效票：成交额 ≥ `AMOUNT_MIN`、OHLC 有效、价 ≥ 2、涨跌幅有限。
 
@@ -84,7 +84,7 @@
 
 ### 4.1 过滤
 
-\(R_i > 0\)、\(R_i < LIMIT_PCT\)、\(RS_i = R_i - R_{mkt} \ge DELTA_MIN\)；按 \(RS\) 取前 `PRESELECT_K`。
+\(R_i > 0\)、未接近该票涨停、\(RS_i = R_i - R_{mkt} \ge DELTA_MIN\)；按 \(RS\) 取前 `PRESELECT_K`。
 
 ### 4.2 得分（0–100）
 
@@ -121,7 +121,7 @@ C5 = 100\cdot\mathrm{clip}\frac{\ln VP_i-\ln VP_{LO}}{\ln VP_{HI}-\ln VP_{LO}}
 
 | 子项 | 权重 | 要点 |
 |---|---|---|
-| C1 剩余空间 | 0.20 | \(h=LIMIT_PCT-R_i\)；\(C1=100\cdot\mathrm{clip}((h-0.5)/5)\) |
+| C1 剩余空间 | 0.20 | \(h=L_{\mathrm{board}}-R_i\)（按板块板幅）；\(C1=100\cdot\mathrm{clip}((h-0.5)/5)\) |
 | C2 回流区 | 0.20 | \(pos\in[0.35,0.65]\)→100；邻域 70；\(pos>0.9\)→35；其余 50 |
 | C3 回吐 | 0.15 | \(giveback=(H-P)/P_{prev}\times100\)；&lt;1→100；&lt;3 线性降；否则 30 |
 | C4 绝对流动性 | 0.10 | \(C4=100\cdot\mathrm{clip}((\ln amount-\ln AMOUNT_MIN)/3)\) |

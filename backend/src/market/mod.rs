@@ -7,6 +7,7 @@
 //!
 //! 算法变更须先改文档再改代码。
 
+pub mod board_limit;
 pub mod calculator;
 pub mod indicators;
 pub mod data_source;

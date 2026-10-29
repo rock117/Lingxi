@@ -1,6 +1,7 @@
 //! MSI 计算引擎 —— 严格按 `docs/market_sentiment.md` 伪代码实现。
 //! 禁止只改本文件不改文档。
 
+use super::board_limit::{is_limit_down, is_limit_up};
 use super::domain::*;
 
 // ============================================================
@@ -23,7 +24,6 @@ const MSI_GREY_BULL_HI: f64 = 65.0;
 const MSI_GREY_BEAR_LO: f64 = 35.0;
 const MSI_GREY_BEAR_HI: f64 = 40.0;
 
-const LIMIT_PCT: f64 = 9.5;
 const EPS_AMOUNT: f64 = 1e-10;
 const EPS_PRICE: f64 = 1e-10;
 const INTRA_HIGH: f64 = 0.8;
@@ -130,14 +130,15 @@ fn daily_structure_raw(stocks: &[StockDailyData], breadth_raw: f64) -> f64 {
 }
 
 /// 涨跌停计数 + 在「已涨跌停」集合内的多空差（信号辅助；不进强度层）。
+/// 按板块涨跌幅限制判定（主板 10% / 科创创业 20% / 北交所 30%），非统一 9.5%。
 fn daily_limit_stats(stocks: &[StockDailyData]) -> (f64, usize, usize) {
     let limit_up = stocks
         .iter()
-        .filter(|s| s.change_pct >= LIMIT_PCT)
+        .filter(|s| is_limit_up(&s.symbol, s.change_pct))
         .count();
     let limit_down = stocks
         .iter()
-        .filter(|s| s.change_pct <= -LIMIT_PCT)
+        .filter(|s| is_limit_down(&s.symbol, s.change_pct))
         .count();
     let denom = (limit_up + limit_down).max(1) as f64;
     let balance = (limit_up as f64 - limit_down as f64) / denom;

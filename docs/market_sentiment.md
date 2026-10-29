@@ -91,7 +91,7 @@ map(x) = 50 + 50 * clamp(x, -1, 1)
 | `MSI_HIGH` / `MSI_LOW` | `65` / `35` | 多/空确认 |
 | `MSI_GREY_BULL_*` | `60` / `65` | 多头灰区（含端点） |
 | `MSI_GREY_BEAR_*` | `35` / `40` | 空头灰区（含端点） |
-| `LIMIT_PCT` | `9.5` | 疑似涨/跌停涨跌幅阈值（百分点），非官方涨跌停 |
+| 涨跌停判定 | 按板块 | 主板 ±10%（触板容差 0.2→≥9.8）；科创/创业 ±20%；北交所 ±30%。见 `board_limit` |
 | `EPS_AMOUNT` | `1e-10` | 成交额保护 |
 | `EPS_PRICE` | `1e-10` | 价格区间容差 |
 | `INTRA_HIGH` / `INTRA_LOW` | `0.8` / `0.2` | 日内位置高/低位（信号用） |
@@ -277,8 +277,9 @@ recent.series = series
 诊断仍统计：
 
 ```
-limit_up   = count(change_pct >=  LIMIT_PCT)
-limit_down = count(change_pct <= -LIMIT_PCT)
+# 按代码推断板块涨跌幅限制 L∈{10,20,30}，触板容差 slack=0.2
+limit_up   = count(change_pct >=  L - slack)   # 主板约 ≥9.8；创业/科创 ≥19.8；北交 ≥29.8
+limit_down = count(change_pct <= -(L - slack))
 limit_balance = (limit_up - limit_down) / max(limit_up + limit_down, 1)   # 两边皆 0 → 0
 ```
 

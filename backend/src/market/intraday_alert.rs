@@ -5,13 +5,13 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::board_limit::{self, near_either_limit, near_limit_up};
 use super::domain::{MarketDataInput, StockDailyData};
 use super::session::{self, SessionPhase};
 
 const DELTA_MIN: f64 = 1.2;
 const AMOUNT_MIN: f64 = 3.0e7;
 const PRESELECT_K: usize = 150;
-const LIMIT_PCT: f64 = 9.5;
 const SCORE_MIN: f64 = 55.0;
 const SCORE_MIN_OVERSOLD: f64 = 40.0;
 const RS_CAP: f64 = 5.0;
@@ -235,7 +235,7 @@ fn score_vp(s: &StockDailyData) -> f64 {
 }
 
 fn score_c(s: &StockDailyData) -> f64 {
-    let headroom = LIMIT_PCT - s.change_pct;
+    let headroom = board_limit::limit_pct_for_symbol(&s.symbol) - s.change_pct;
     let c1 = 100.0 * clip01((headroom - 0.5) / 5.0);
 
     let pos = intra_pos(s);
@@ -295,7 +295,7 @@ fn r_mkt_of(valid: &[&StockDailyData]) -> f64 {
     let mkt_sample: Vec<&StockDailyData> = valid
         .iter()
         .copied()
-        .filter(|s| s.change_pct < LIMIT_PCT && s.change_pct > -LIMIT_PCT)
+        .filter(|s| !near_either_limit(&s.symbol, s.change_pct))
         .collect();
     if mkt_sample.is_empty() {
         0.0
@@ -506,7 +506,7 @@ pub fn calculate_intraday_alerts_at(
 
     let mut candidates: Vec<(&StockDailyData, f64)> = Vec::new();
     for s in &valid {
-        if s.change_pct <= 0.0 || s.change_pct >= LIMIT_PCT {
+        if s.change_pct <= 0.0 || near_limit_up(&s.symbol, s.change_pct) {
             continue;
         }
         let rs = s.change_pct - r_mkt;
