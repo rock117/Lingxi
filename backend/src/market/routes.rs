@@ -206,7 +206,7 @@ pub async fn fund_stats_meta(
     Ok(Json(meta))
 }
 
-/// `GET /api/market/fund-stats?year=2024&period=FY` — 全市场赚钱/增长/现金流占比。
+/// `GET /api/market/fund-stats?year=2024&period=FY` — 全市场水平面/增长面 + 同比环比汇总。
 #[get("/api/market/fund-stats?<year>&<period>")]
 pub async fn fund_stats_query(
     db: &rocket::State<DatabaseConnection>,
@@ -220,6 +220,9 @@ pub async fn fund_stats_query(
         year = result.year,
         period = %result.period,
         np_pct = ?result.net_profit.positive_pct,
+        np_yoy_pct = ?result.net_profit_yoy.positive_pct,
+        yoy_up = result.summary.yoy_up,
+        qoq_up = result.summary.qoq_up,
         "全市场财报统计"
     );
     Ok(Json(result))
