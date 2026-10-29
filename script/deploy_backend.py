@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-将 backend/ 部署到远程服务器：上传源码 → 远程 cargo build --release → 重启服务。
+将 backend/ 部署到远程服务器：上传源码 → 停服务 → 远程 cargo build --release → 安装并重启服务。
+编译前停止 lingxi-backend + securities-collector 以腾内存；无论编译成败，结束后都会尝试重新拉起两者。
 
 从项目根目录 .env 读取 SSH 配置：
   ssh_server / ssh_port / ssh_user / ssh_pwd
@@ -48,6 +49,8 @@ DEFAULT_REMOTE_DIR = os.getenv("deploy_remote_dir", "/home/rock/project/lingxi")
 # 运行目录：二进制安装到这里并由 systemd 启动
 DEFAULT_APP_DIR = os.getenv("deploy_app_dir", "/home/rock/apps/lingxi").strip()
 SERVICE_NAME = "lingxi-backend"
+# 同机另一服务：编译前一并停掉腾内存，结束后一并拉起
+COLLECTOR_SERVICE_NAME = "securities-collector"
 BINARY_NAME = "lingxi-backend"
 LISTEN_PORT = int(os.getenv("app_http_port", os.getenv("PORT", "8000")))
 DATABASE_URL = os.getenv(
@@ -293,7 +296,49 @@ def ensure_systemd_and_restart(
             local_tmp.unlink()
 
 
+def _stop_one(ssh: paramiko.SSHClient, name: str):
+    print(f"  stop {name} ...")
+    run_ssh(ssh, f"sudo systemctl stop {name}", check=False)
+    run_ssh(
+        ssh,
+        f"sudo systemctl is-active {name} >/dev/null 2>&1 "
+        f"&& echo 'WARN: {name} still active' "
+        f"|| echo 'OK: {name} stopped or not installed'",
+        check=False,
+    )
+
+
+def _start_one(ssh: paramiko.SSHClient, name: str):
+    print(f"  start {name} ...")
+    run_ssh(ssh, f"sudo systemctl start {name}", check=False)
+    time.sleep(1)
+    run_ssh(
+        ssh,
+        f"sudo systemctl is-active {name} >/dev/null 2>&1 "
+        f"&& echo 'OK: {name} active' "
+        f"|| echo 'WARN: {name} not active'",
+        check=False,
+    )
+
+
+def stop_services_for_build(ssh: paramiko.SSHClient):
+    """编译前停本服务 + collector，释放内存给 rustc。"""
+    print(
+        f"停止服务（为 release 编译腾内存）: {SERVICE_NAME}, {COLLECTOR_SERVICE_NAME}"
+    )
+    _stop_one(ssh, SERVICE_NAME)
+    _stop_one(ssh, COLLECTOR_SERVICE_NAME)
+
+
+def start_services_after_build(ssh: paramiko.SSHClient):
+    """编译/发布结束后拉起两侧服务。"""
+    print(f"启动 {SERVICE_NAME}, {COLLECTOR_SERVICE_NAME} ...")
+    _start_one(ssh, SERVICE_NAME)
+    _start_one(ssh, COLLECTOR_SERVICE_NAME)
+
+
 def remote_build(ssh: paramiko.SSHClient, remote_dir: str, app_dir: str):
+    stop_services_for_build(ssh)
     run_ssh(
         ssh,
         f"cd {remote_dir} && cargo build --release --bin {BINARY_NAME}",
@@ -393,13 +438,21 @@ def main():
             if failed:
                 sys.exit(1)
 
-            if not args.skip_build:
-                print("\n远程编译 release 并安装到运行目录 ...")
-                remote_build(ssh, args.remote_dir, args.app_dir)
+            stopped_for_build = False
+            try:
+                if not args.skip_build:
+                    print("\n远程编译 release 并安装到运行目录 ...")
+                    # 标志先置位：remote_build 开头会停服务；即使 cargo 失败也要在 finally 拉起
+                    stopped_for_build = True
+                    remote_build(ssh, args.remote_dir, args.app_dir)
 
-            if not args.skip_restart:
-                print("\n配置 systemd 并重启 ...")
-                ensure_systemd_and_restart(ssh, sftp, args.app_dir)
+                if not args.skip_restart:
+                    print("\n配置 systemd 并重启 ...")
+                    ensure_systemd_and_restart(ssh, sftp, args.app_dir)
+            finally:
+                # 无论编译成败，只要为编译停过服务就尽量拉起两侧，避免长期停机
+                if stopped_for_build:
+                    start_services_after_build(ssh)
 
         print("\n健康检查 ...")
         run_ssh(
