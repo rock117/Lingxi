@@ -186,6 +186,61 @@ pub fn shanghai_offset() -> FixedOffset {
     FixedOffset::east_opt(8 * 3600).expect("UTC+8")
 }
 
+/// 连续竞价全日分钟数：09:30–11:30 + 13:00–15:00 = 240。
+pub const CONTINUOUS_AUCTION_MINUTES: i32 = 240;
+
+/// 上海当日分钟数 → 已走过的连续竞价分钟（午休按上午收满计；收盘后 = 240）。
+pub fn continuous_auction_elapsed_minutes(minutes_of_day: i32) -> i32 {
+    const M930: i32 = 9 * 60 + 30;
+    const M1130: i32 = 11 * 60 + 30;
+    const M1300: i32 = 13 * 60;
+    const M1500: i32 = 15 * 60;
+    const AM: i32 = 120;
+    if minutes_of_day < M930 {
+        0
+    } else if minutes_of_day <= M1130 {
+        minutes_of_day - M930
+    } else if minutes_of_day < M1300 {
+        AM
+    } else if minutes_of_day <= M1500 {
+        AM + (minutes_of_day - M1300)
+    } else {
+        CONTINUOUS_AUCTION_MINUTES
+    }
+}
+
+/// 盘中成交额外推至少已交易这么多分钟；未满则不计当日额（返回 0）。
+pub const AUCTION_AMOUNT_MIN_ELAPSED: i32 = 10;
+
+/// 将盘中累计成交额外推到「全日等量」：`实际额 × (240 / 已交易分钟)`。
+/// - **09:30–15:00**（含午休）且已交易不足 10 分钟：返回 **0**（不计当日；开盘当分钟 elapsed=0 也走此支）
+/// - 盘前 / 15:00 之后：返回 **1**（日 K 全日额，不外推）
+/// - 已交易 ≥10 且未收盘：返回 `240 / t`
+///
+/// 例：已交易 60 分钟、累计额 x → 外推额 = x × (240/60) = 4x。
+pub fn auction_amount_extrapolation_factor(minutes_of_day: i32) -> f64 {
+    const M930: i32 = 9 * 60 + 30;
+    const M1500: i32 = 15 * 60;
+    // 盘前或收盘后：用全日额，不外推
+    if minutes_of_day < M930 || minutes_of_day > M1500 {
+        return 1.0;
+    }
+    let elapsed = continuous_auction_elapsed_minutes(minutes_of_day);
+    if elapsed < AUCTION_AMOUNT_MIN_ELAPSED {
+        0.0
+    } else if elapsed >= CONTINUOUS_AUCTION_MINUTES {
+        1.0
+    } else {
+        CONTINUOUS_AUCTION_MINUTES as f64 / elapsed as f64
+    }
+}
+
+pub fn auction_amount_extrapolation_factor_now() -> f64 {
+    let sh = Utc::now().with_timezone(&shanghai_offset());
+    let minutes = sh.hour() as i32 * 60 + sh.minute() as i32;
+    auction_amount_extrapolation_factor(minutes)
+}
+
 /// 当前是否处于连续竞价时钟窗（不论是否节假日）。
 ///
 /// 交易日与否见 `data_source::is_open_trade_day`（`sc_trade_calendar.is_open`）。
@@ -258,6 +313,34 @@ pub fn is_intraday_push_session_at(utc: chrono::DateTime<Utc>) -> bool {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    #[test]
+    fn auction_elapsed_and_amount_scale() {
+        // 开盘当分钟 elapsed=0，仍须不计当日（勿当成盘前系数 1）
+        assert_eq!(continuous_auction_elapsed_minutes(9 * 60 + 30), 0);
+        assert!((auction_amount_extrapolation_factor(9 * 60 + 30) - 0.0).abs() < 1e-9);
+        // 开盘未满 10 分钟：不计当日
+        assert_eq!(continuous_auction_elapsed_minutes(9 * 60 + 35), 5);
+        assert!((auction_amount_extrapolation_factor(9 * 60 + 35) - 0.0).abs() < 1e-9);
+        // 满 10 分钟：×24
+        assert_eq!(continuous_auction_elapsed_minutes(9 * 60 + 40), 10);
+        assert!((auction_amount_extrapolation_factor(9 * 60 + 40) - 24.0).abs() < 1e-9);
+        // 10:30 = 开盘后 60 分钟 → 外推 ×4
+        assert_eq!(continuous_auction_elapsed_minutes(10 * 60 + 30), 60);
+        assert!((auction_amount_extrapolation_factor(10 * 60 + 30) - 4.0).abs() < 1e-9);
+        // 午休：上午满 120 → ×2
+        assert_eq!(continuous_auction_elapsed_minutes(12 * 60), 120);
+        assert!((auction_amount_extrapolation_factor(12 * 60) - 2.0).abs() < 1e-9);
+        // 15:00 整点：全日满，不外推
+        assert_eq!(continuous_auction_elapsed_minutes(15 * 60), CONTINUOUS_AUCTION_MINUTES);
+        assert!((auction_amount_extrapolation_factor(15 * 60) - 1.0).abs() < 1e-9);
+        // 收盘后不外推
+        assert_eq!(continuous_auction_elapsed_minutes(16 * 60), CONTINUOUS_AUCTION_MINUTES);
+        assert!((auction_amount_extrapolation_factor(16 * 60) - 1.0).abs() < 1e-9);
+        // 盘前不外推
+        assert_eq!(continuous_auction_elapsed_minutes(9 * 60), 0);
+        assert!((auction_amount_extrapolation_factor(9 * 60) - 1.0).abs() < 1e-9);
+    }
 
     #[test]
     fn inside_am_auction() {

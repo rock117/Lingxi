@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use super::domain::{MarketDataInput, StockDailyData};
-use super::session::SessionPhase;
+use super::session::{self, SessionPhase};
 
 const DELTA_MIN: f64 = 1.2;
 const AMOUNT_MIN: f64 = 3.0e7;
@@ -25,8 +25,10 @@ pub const OVERSOLD_WINDOW_DAYS: usize = 250;
 const OVERSOLD_HIST_MIN: usize = 60;
 /// 近 N 日（含当日）创出区间新低、大阴、放量。
 const OVERSOLD_RECENT_DAYS: usize = 3;
-/// 大阴线：单日涨跌幅 ≤ −10%。
-const BIG_RED_PCT: f64 = -10.0;
+/// 大阴幅度：|涨跌幅| ≥ 10%（且须为下跌，见 `oversold_red_day_ok`）。
+const BIG_MOVE_PCT: f64 = 10.0;
+/// 路径 1：近 3 日已大阴时，当日实盘涨跌须 ≤ 此值。
+const TODAY_CHANGE_MAX: f64 = 2.0;
 /// 放量：相对此前均额 ≥ 2 倍。
 const VOL_SPIKE_RATIO: f64 = 2.0;
 /// 均额回看（不含近 3 日）最多日数。
@@ -352,18 +354,34 @@ fn broke_recent_low(s: &StockDailyData, hist: &[&StockDailyData]) -> bool {
     recent_min <= period_min + EPS
 }
 
-/// 近 3 日或当日出现 ≤ −10% 大阴。
-fn has_big_red(s: &StockDailyData, hist: &[&StockDailyData]) -> bool {
-    if s.change_pct <= BIG_RED_PCT {
+/// 大阴条件（满足其一即可）：
+/// 1. 近 3 个已收盘日 **均下跌**，且至少一日 `|Δ|≥10%`，且当日 `Δ≤2%`
+/// 2. 当日下跌且 `|Δ|≥10%`（即 `Δ≤−10%`）
+fn oversold_red_day_ok(s: &StockDailyData, hist: &[&StockDailyData]) -> bool {
+    let curr = s.change_pct;
+    // 路径 2：当日实盘已砸 ≥10%
+    if curr < 0.0 && curr.abs() >= BIG_MOVE_PCT {
         return true;
     }
+    // 路径 1：前 3 日阴跌 + 至少一日大阴，当日未大涨
     let n = hist.len();
     let take = OVERSOLD_RECENT_DAYS.min(n);
-    hist[n - take..].iter().any(|b| b.change_pct <= BIG_RED_PCT)
+    if take == 0 {
+        return false;
+    }
+    let recent = &hist[n - take..];
+    if !recent.iter().all(|b| b.change_pct < 0.0) {
+        return false;
+    }
+    if !recent.iter().any(|b| b.change_pct.abs() >= BIG_MOVE_PCT) {
+        return false;
+    }
+    curr <= TODAY_CHANGE_MAX
 }
 
-/// 近 3 日或当日成交额 ≥ 2× 此前均额（均额取近 3 日之前最多 20 日）。
-fn vol_spike_ratio(s: &StockDailyData, hist: &[&StockDailyData]) -> Option<f64> {
+/// 近 3 日至少一日成交额 ≥ 2× 此前均额，或当日（可按竞价进度外推）≥ 2×。
+/// `today_amount`：已外推全日等量；≤0 表示未满 10 分钟等、不计当日。
+fn vol_spike_ratio(hist: &[&StockDailyData], today_amount: f64) -> Option<f64> {
     let n = hist.len();
     let recent_n = OVERSOLD_RECENT_DAYS.min(n);
     let base_end = n.saturating_sub(recent_n);
@@ -379,17 +397,20 @@ fn vol_spike_ratio(s: &StockDailyData, hist: &[&StockDailyData]) -> Option<f64> 
     if avg <= EPS {
         return None;
     }
-    let recent_max = hist[n - recent_n..]
+    let mut recent_max = hist[n - recent_n..]
         .iter()
         .map(|b| b.amount)
-        .chain(std::iter::once(s.amount))
         .fold(0.0_f64, f64::max);
+    if today_amount > EPS {
+        recent_max = recent_max.max(today_amount);
+    }
     Some(recent_max / avg)
 }
 
 fn passes_oversold_filters(
     s: &StockDailyData,
     hist: &[&StockDailyData],
+    today_amount_scale: f64,
 ) -> Option<(f64, f64)> {
     let dd = year_drawdown_pct(s, hist)?;
     if dd > DD_YEAR_MIN {
@@ -398,10 +419,16 @@ fn passes_oversold_filters(
     if !broke_recent_low(s, hist) {
         return None;
     }
-    if !has_big_red(s, hist) {
+    if !oversold_red_day_ok(s, hist) {
         return None;
     }
-    let vol_r = vol_spike_ratio(s, hist)?;
+    // scale==0：开盘未满 10 分钟，不计当日额；scale>=1：外推或全日
+    let today_amt = if today_amount_scale <= 0.0 {
+        0.0
+    } else {
+        s.amount * today_amount_scale
+    };
+    let vol_r = vol_spike_ratio(hist, today_amt)?;
     if vol_r < VOL_SPIKE_RATIO {
         return None;
     }
@@ -538,7 +565,7 @@ pub fn calculate_intraday_alerts_at(
     }
 }
 
-/// 超跌反弹 TopN：年高回撤 ≥70% + 近 3 日/现价破新低 + 大阴 −10%+ + 放量 ≥2×。
+/// 超跌反弹 TopN：年高回撤 ≥70% + 破新低 + 大阴路径 + 放量 ≥2×（当日额按时段外推）。
 pub fn calculate_oversold_alerts(input: &MarketDataInput) -> IntradayAlertResult {
     calculate_oversold_alerts_at(input, SessionPhase::now())
 }
@@ -546,6 +573,18 @@ pub fn calculate_oversold_alerts(input: &MarketDataInput) -> IntradayAlertResult
 pub fn calculate_oversold_alerts_at(
     input: &MarketDataInput,
     phase: SessionPhase,
+) -> IntradayAlertResult {
+    calculate_oversold_alerts_scaled(
+        input,
+        phase,
+        session::auction_amount_extrapolation_factor_now(),
+    )
+}
+
+fn calculate_oversold_alerts_scaled(
+    input: &MarketDataInput,
+    phase: SessionPhase,
+    today_amount_scale: f64,
 ) -> IntradayAlertResult {
     let Some(today) = input.snapshots.last() else {
         return empty_result(String::new());
@@ -571,7 +610,7 @@ pub fn calculate_oversold_alerts_at(
         let Some(hist) = oversold_hist(hist_map.get(&s.symbol).map(|v| v.as_slice())) else {
             continue;
         };
-        let Some((dd, vol_r)) = passes_oversold_filters(s, hist) else {
+        let Some((dd, vol_r)) = passes_oversold_filters(s, hist, today_amount_scale) else {
             continue;
         };
         let rs = s.change_pct - r_mkt;
@@ -771,6 +810,51 @@ mod tests {
         );
         let hit = r.items.iter().find(|i| i.symbol == "CRASH.SH").unwrap();
         assert!(hit.drawdown_pct <= -70.0, "dd={}", hit.drawdown_pct);
+    }
+
+    #[test]
+    fn oversold_rejects_today_up_over_2pct() {
+        let mut snaps = Vec::new();
+        for d in 1..=60 {
+            let (px, chg, amt) = if d == 1 {
+                (100.0, 0.0, 5.0e7)
+            } else if d <= 57 {
+                let px = 100.0 - (d as f64 - 1.0) * 1.0;
+                (px.max(40.0), -1.0, 5.0e7)
+            } else if d == 58 {
+                (35.0, -12.0, 5.0e7)
+            } else if d == 59 {
+                (30.0, -14.0, 1.2e8)
+            } else {
+                (28.0, -6.0, 5.0e7)
+            };
+            push_day(
+                &mut snaps,
+                d,
+                vec![hist_bar(
+                    "UP.SH",
+                    &format!("2025-{:03}", d),
+                    chg,
+                    px,
+                    amt,
+                )],
+            );
+        }
+        // 历史已大阴+放量，但当日反弹 ≥2% → 剔除
+        snaps.push(MarketDailySnapshot {
+            date: "2025-061".into(),
+            stocks: vec![bar("UP.SH", 2.5, 1.2e8, 28.0, 29.0, 27.5, 28.7)],
+        });
+        let r = calculate_oversold_alerts_scaled(
+            &MarketDataInput { snapshots: snaps },
+            SessionPhase::AmMid,
+            1.0,
+        );
+        assert!(
+            r.items.iter().all(|i| i.symbol != "UP.SH"),
+            "today +2.5% must be excluded: {:?}",
+            r.items
+        );
     }
 
     #[test]
