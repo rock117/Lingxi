@@ -2,7 +2,7 @@ package com.lingxi.app.notification
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -28,6 +28,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -43,7 +44,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -61,6 +61,14 @@ private val Shanghai = ZoneId.of("Asia/Shanghai")
 private val TimeFmt = DateTimeFormatter.ofPattern("MM-dd HH:mm")
 private const val COLLAPSED_COUNT = 3
 
+private enum class AlertSide {
+    Trend,
+    Oversold,
+}
+
+private const val KIND_TREND = "intraday_alert"
+private const val KIND_OVERSOLD = "intraday_oversold"
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun NotificationListScreen(viewModel: NotificationViewModel) {
@@ -69,6 +77,7 @@ fun NotificationListScreen(viewModel: NotificationViewModel) {
     val unread by viewModel.unreadCount.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
 
+    var side by rememberSaveable { mutableStateOf(AlertSide.Trend) }
     var selecting by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -78,17 +87,26 @@ fun NotificationListScreen(viewModel: NotificationViewModel) {
         selectedIds = emptySet()
     }
 
+    val filtered = remember(items, side) {
+        val want = when (side) {
+            AlertSide.Trend -> KIND_TREND
+            AlertSide.Oversold -> KIND_OVERSOLD
+        }
+        items.filter { it.parseIntradayAlert()?.kind == want }
+    }
+    val sideUnread = remember(filtered) { filtered.count { !it.read } }
+
     Column(modifier = Modifier.fillMaxSize()) {
         if (selecting) {
             SelectionBar(
                 selectedCount = selectedIds.size,
-                total = total,
+                total = filtered.size,
                 onCancel = { exitSelection() },
                 onSelectAll = {
-                    selectedIds = if (selectedIds.size == items.size) {
+                    selectedIds = if (selectedIds.size == filtered.size) {
                         emptySet()
                     } else {
-                        items.map { it.id }.toSet()
+                        filtered.map { it.id }.toSet()
                     }
                 },
                 onDelete = { if (selectedIds.isNotEmpty()) confirmDelete = true },
@@ -102,7 +120,11 @@ fun NotificationListScreen(viewModel: NotificationViewModel) {
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (unread > 0) "共 $total 条 · 未读 $unread" else "共 $total 条",
+                        text = buildString {
+                            append("本类 ${filtered.size} 条")
+                            if (sideUnread > 0) append(" · 未读 $sideUnread")
+                            if (total > filtered.size) append(" · 全部 $total")
+                        },
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -122,6 +144,31 @@ fun NotificationListScreen(viewModel: NotificationViewModel) {
             }
         }
 
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            FilterChip(
+                selected = side == AlertSide.Trend,
+                onClick = {
+                    side = AlertSide.Trend
+                    exitSelection()
+                },
+                label = { Text("趋势") },
+            )
+            FilterChip(
+                selected = side == AlertSide.Oversold,
+                onClick = {
+                    side = AlertSide.Oversold
+                    exitSelection()
+                },
+                label = { Text("超跌") },
+            )
+        }
+
         PullToRefreshBox(
             isRefreshing = refreshing,
             onRefresh = {
@@ -129,7 +176,7 @@ fun NotificationListScreen(viewModel: NotificationViewModel) {
             },
             modifier = Modifier.weight(1f),
         ) {
-            if (items.isEmpty()) {
+            if (filtered.isEmpty()) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -137,7 +184,13 @@ fun NotificationListScreen(viewModel: NotificationViewModel) {
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Text("暂无通知", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        when (side) {
+                            AlertSide.Trend -> "暂无趋势通知"
+                            AlertSide.Oversold -> "暂无超跌通知"
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                     Text(
                         "下拉可刷新",
                         style = MaterialTheme.typography.bodySmall,
@@ -151,7 +204,7 @@ fun NotificationListScreen(viewModel: NotificationViewModel) {
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    items(items, key = { it.id }) { item ->
+                    items(filtered, key = { it.id }) { item ->
                         val selected = item.id in selectedIds
                         NotificationCard(
                             item = item,
@@ -167,8 +220,6 @@ fun NotificationListScreen(viewModel: NotificationViewModel) {
                                     if (selectedIds.isEmpty()) {
                                         selecting = false
                                     }
-                                } else {
-                                    // expand handled inside card
                                 }
                             },
                             onLongClick = {
@@ -305,14 +356,11 @@ private fun NotificationCard(
                         onCheckedChange = { onClick() },
                     )
                 }
-                AlertKindTag(kind = alert?.kind)
                 Text(
                     text = item.title,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = if (item.read) FontWeight.Normal else FontWeight.Bold,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(start = if (alertKindLabel(alert?.kind) != null) 8.dp else 0.dp),
+                    modifier = Modifier.weight(1f),
                 )
                 if (!item.read) {
                     Text(
@@ -354,31 +402,6 @@ private fun NotificationCard(
             }
         }
     }
-}
-
-private fun alertKindLabel(kind: String?): String? = when (kind) {
-    "intraday_alert" -> "趋势"
-    "intraday_oversold" -> "超跌"
-    else -> null
-}
-
-@Composable
-private fun AlertKindTag(kind: String?) {
-    val label = alertKindLabel(kind) ?: return
-    val (bg, fg) = when (kind) {
-        "intraday_oversold" -> MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
-        else -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
-    }
-    Text(
-        text = label,
-        style = MaterialTheme.typography.labelSmall,
-        fontWeight = FontWeight.SemiBold,
-        color = fg,
-        modifier = Modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(bg)
-            .padding(horizontal = 6.dp, vertical = 2.dp),
-    )
 }
 
 @Composable

@@ -14,9 +14,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Assessment
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -32,38 +29,26 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.lingxi.app.notification.NotificationListScreen
 import com.lingxi.app.viewmodel.MarketViewModel
-import com.lingxi.app.viewmodel.NotificationViewModel
 
 private enum class MoreDest {
     Menu,
     FundStats,
-    Notifications,
 }
 
 @Composable
 fun MoreTab(
     marketViewModel: MarketViewModel,
-    notificationViewModel: NotificationViewModel,
 ) {
     var dest by rememberSaveable { mutableStateOf(MoreDest.Menu) }
-    val unread by notificationViewModel.unreadCount.collectAsStateWithLifecycle()
 
     when (dest) {
         MoreDest.Menu -> MoreMenuScreen(
-            unread = unread,
             onFundStats = { dest = MoreDest.FundStats },
-            onNotifications = { dest = MoreDest.Notifications },
         )
         MoreDest.FundStats -> Column(modifier = Modifier.fillMaxSize()) {
             MoreSubHeader(title = "A股财报统计", onBack = { dest = MoreDest.Menu })
             FundStatsScreen(viewModel = marketViewModel)
-        }
-        MoreDest.Notifications -> Column(modifier = Modifier.fillMaxSize()) {
-            MoreSubHeader(title = "通知", onBack = { dest = MoreDest.Menu })
-            NotificationListScreen(viewModel = notificationViewModel)
         }
     }
 }
@@ -85,9 +70,7 @@ private fun MoreSubHeader(title: String, onBack: () -> Unit) {
 
 @Composable
 private fun MoreMenuScreen(
-    unread: Int,
     onFundStats: () -> Unit,
-    onNotifications: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -112,13 +95,6 @@ private fun MoreMenuScreen(
             onClick = onFundStats,
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-        MoreMenuRow(
-            icon = Icons.Default.Notifications,
-            title = "通知",
-            subtitle = if (unread > 0) "未读 $unread 条" else "日内强势等推送",
-            badge = unread,
-            onClick = onNotifications,
-        )
     }
 }
 
@@ -127,7 +103,6 @@ private fun MoreMenuRow(
     icon: ImageVector,
     title: String,
     subtitle: String,
-    badge: Int = 0,
     onClick: () -> Unit,
 ) {
     Row(
@@ -138,15 +113,7 @@ private fun MoreMenuRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        BadgedBox(
-            badge = {
-                if (badge > 0) {
-                    Badge { Text(if (badge > 99) "99+" else badge.toString()) }
-                }
-            },
-        ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(28.dp))
-        }
+        Icon(icon, contentDescription = null, modifier = Modifier.size(28.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(title, fontWeight = FontWeight.Medium)
             Text(

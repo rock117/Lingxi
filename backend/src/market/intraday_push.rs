@@ -144,8 +144,14 @@ async fn compute_bundle(
     miana: &MianaClient,
     cache: &RealtimeDayCache,
 ) -> anyhow::Result<IntradayAlertBundle> {
-    // 11 = 近 10 个已收盘日 + 当日（超跌回看 10 日；趋势 B 仍用其中近 5 日）
-    let input = data_source::load_market_window_hybrid(db, 11, miana, cache).await?;
+    // 约一年开市日：超跌年高回撤；趋势侧仍只用近几日结构
+    let input = data_source::load_market_window_hybrid(
+        db,
+        super::intraday_alert::OVERSOLD_WINDOW_DAYS,
+        miana,
+        cache,
+    )
+    .await?;
     let mut bundle = calculate_alert_bundle(&input);
     enrich_names(db, &mut bundle.trend).await?;
     enrich_names(db, &mut bundle.oversold).await?;

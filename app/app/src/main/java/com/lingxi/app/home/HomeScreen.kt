@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ListAlt
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Badge
@@ -34,6 +35,7 @@ import com.lingxi.app.condition.StrategyListScreen
 import com.lingxi.app.market.MoreTab
 import com.lingxi.app.market.SectorTab
 import com.lingxi.app.market.SentimentScreen
+import com.lingxi.app.notification.NotificationListScreen
 import com.lingxi.app.viewmodel.MarketViewModel
 import com.lingxi.app.viewmodel.NotificationViewModel
 import com.lingxi.app.viewmodel.ScreenViewModel
@@ -74,6 +76,7 @@ fun HomeScreen(
                 else -> "板块强弱"
             }
         }
+        4 -> "通知"
         else -> "更多"
     }
 
@@ -125,9 +128,15 @@ fun HomeScreen(
                                 }
                             },
                         ) {
-                            Icon(Icons.Default.Apps, contentDescription = null)
+                            Icon(Icons.Default.Notifications, contentDescription = null)
                         }
                     },
+                    label = { Text("通知") },
+                )
+                NavigationBarItem(
+                    selected = tab == 5,
+                    onClick = { tab = 5 },
+                    icon = { Icon(Icons.Default.Apps, contentDescription = null) },
                     label = { Text("更多") },
                 )
             }
@@ -167,10 +176,8 @@ fun HomeScreen(
                         tab = 2
                     },
                 )
-                else -> MoreTab(
-                    marketViewModel = marketViewModel,
-                    notificationViewModel = notificationViewModel,
-                )
+                4 -> NotificationListScreen(viewModel = notificationViewModel)
+                else -> MoreTab(marketViewModel = marketViewModel)
             }
         }
     }

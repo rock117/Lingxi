@@ -13,18 +13,24 @@ const AMOUNT_MIN: f64 = 3.0e7;
 const PRESELECT_K: usize = 150;
 const LIMIT_PCT: f64 = 9.5;
 const SCORE_MIN: f64 = 55.0;
-const SCORE_MIN_OVERSOLD: f64 = 52.0;
+const SCORE_MIN_OVERSOLD: f64 = 40.0;
 const RS_CAP: f64 = 5.0;
 /// 量价比 amount/R_i（元/百分点）log 映射下界 / 上界。
 const VP_LO: f64 = 1.5e7;
 const VP_HI: f64 = 5.0e8;
-/// 超跌入选：至少回撤 8%。
-const DD_MIN: f64 = -8.0;
-/// 超跌回看已收盘日数（峰值/坏趋势/量能对比）。
-const OVERSOLD_LOOKBACK: usize = 10;
-const OVERSOLD_HIST_MIN: usize = 5;
-/// 近 LOOKBACK 日几乎全阴且区间收益 ≤ 此值 → 剔除。
-const BROKEN_TREND_RN: f64 = -20.0;
+/// 超跌：相对近一年（或可用区间）最高点至少回撤 70%。
+const DD_YEAR_MIN: f64 = -70.0;
+/// 加载开市日数（约一年）；不足一年用已有日 K，但已收盘日须 ≥ `OVERSOLD_HIST_MIN`。
+pub const OVERSOLD_WINDOW_DAYS: usize = 250;
+const OVERSOLD_HIST_MIN: usize = 60;
+/// 近 N 日（含当日）创出区间新低、大阴、放量。
+const OVERSOLD_RECENT_DAYS: usize = 3;
+/// 大阴线：单日涨跌幅 ≤ −10%。
+const BIG_RED_PCT: f64 = -10.0;
+/// 放量：相对此前均额 ≥ 2 倍。
+const VOL_SPIKE_RATIO: f64 = 2.0;
+/// 均额回看（不含近 3 日）最多日数。
+const VOL_BASE_LOOKBACK: usize = 20;
 const EPS: f64 = 1e-10;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -307,131 +313,140 @@ fn build_hist_map(input: &MarketDataInput) -> HashMap<String, Vec<&StockDailyDat
     hist_map
 }
 
-fn hist_tail<'a>(hist: Option<&'a [&'a StockDailyData]>) -> Option<&'a [&'a StockDailyData]> {
-    let bars = hist.filter(|b| b.len() >= OVERSOLD_HIST_MIN)?;
-    Some(if bars.len() > OVERSOLD_LOOKBACK {
-        &bars[bars.len() - OVERSOLD_LOOKBACK..]
-    } else {
-        bars
-    })
+/// 已收盘日 K；不足 `OVERSOLD_HIST_MIN` 返回 `None`（上市不足约 60 日）。
+fn oversold_hist<'a>(hist: Option<&'a [&'a StockDailyData]>) -> Option<&'a [&'a StockDailyData]> {
+    hist.filter(|b| b.len() >= OVERSOLD_HIST_MIN)
 }
 
-/// 相对近高回撤（百分点）。用近最多 10 个已收盘日的最高价；不足 5 日返回 `None`。
-fn drawdown_pct(s: &StockDailyData, hist: Option<&[&StockDailyData]>) -> Option<f64> {
-    let bars = hist_tail(hist)?;
-    let peak = bars.iter().map(|b| b.high).fold(f64::NEG_INFINITY, f64::max);
+/// 相对窗口内最高价回撤（百分点）。不足一年则用已有日 K 的最高点。
+fn year_drawdown_pct(s: &StockDailyData, hist: &[&StockDailyData]) -> Option<f64> {
+    let peak = hist
+        .iter()
+        .map(|b| b.high)
+        .chain(std::iter::once(s.high))
+        .fold(f64::NEG_INFINITY, f64::max);
     if !peak.is_finite() || peak <= EPS {
         return None;
     }
     Some((s.close_price / peak - 1.0) * 100.0)
 }
 
-/// 近 10 日几乎全阴且跌幅过深：趋势坏票，不进超跌池。
-fn is_broken_trend(hist: Option<&[&StockDailyData]>) -> bool {
-    let Some(bars) = hist_tail(hist) else {
-        return false;
-    };
-    let up_days = bars.iter().filter(|b| b.change_pct > 0.0).count();
-    if up_days > 1 {
+/// 近 3 日（已收盘）或当日价/低点创出整段回看新低。
+fn broke_recent_low(s: &StockDailyData, hist: &[&StockDailyData]) -> bool {
+    let n = hist.len();
+    let take = OVERSOLD_RECENT_DAYS.min(n);
+    let recent = &hist[n - take..];
+    let period_min = hist
+        .iter()
+        .map(|b| b.low)
+        .chain([s.low, s.close_price])
+        .fold(f64::INFINITY, f64::min);
+    if !period_min.is_finite() {
         return false;
     }
-    let first = bars.first().map(|b| b.close_price).unwrap_or(0.0);
-    let last = bars.last().map(|b| b.close_price).unwrap_or(0.0);
-    if first.abs() < EPS {
-        return false;
-    }
-    let rn = (last / first - 1.0) * 100.0;
-    rn <= BROKEN_TREND_RN
+    let recent_min = recent
+        .iter()
+        .map(|b| b.low)
+        .chain([s.low, s.close_price])
+        .fold(f64::INFINITY, f64::min);
+    recent_min <= period_min + EPS
 }
 
-/// 回撤质量：甜区约 10%–20%，极端深跌降分。
+/// 近 3 日或当日出现 ≤ −10% 大阴。
+fn has_big_red(s: &StockDailyData, hist: &[&StockDailyData]) -> bool {
+    if s.change_pct <= BIG_RED_PCT {
+        return true;
+    }
+    let n = hist.len();
+    let take = OVERSOLD_RECENT_DAYS.min(n);
+    hist[n - take..].iter().any(|b| b.change_pct <= BIG_RED_PCT)
+}
+
+/// 近 3 日或当日成交额 ≥ 2× 此前均额（均额取近 3 日之前最多 20 日）。
+fn vol_spike_ratio(s: &StockDailyData, hist: &[&StockDailyData]) -> Option<f64> {
+    let n = hist.len();
+    let recent_n = OVERSOLD_RECENT_DAYS.min(n);
+    let base_end = n.saturating_sub(recent_n);
+    if base_end == 0 {
+        return None;
+    }
+    let base_start = base_end.saturating_sub(VOL_BASE_LOOKBACK);
+    let base = &hist[base_start..base_end];
+    if base.is_empty() {
+        return None;
+    }
+    let avg = base.iter().map(|b| b.amount).sum::<f64>() / base.len() as f64;
+    if avg <= EPS {
+        return None;
+    }
+    let recent_max = hist[n - recent_n..]
+        .iter()
+        .map(|b| b.amount)
+        .chain(std::iter::once(s.amount))
+        .fold(0.0_f64, f64::max);
+    Some(recent_max / avg)
+}
+
+fn passes_oversold_filters(
+    s: &StockDailyData,
+    hist: &[&StockDailyData],
+) -> Option<(f64, f64)> {
+    let dd = year_drawdown_pct(s, hist)?;
+    if dd > DD_YEAR_MIN {
+        return None;
+    }
+    if !broke_recent_low(s, hist) {
+        return None;
+    }
+    if !has_big_red(s, hist) {
+        return None;
+    }
+    let vol_r = vol_spike_ratio(s, hist)?;
+    if vol_r < VOL_SPIKE_RATIO {
+        return None;
+    }
+    Some((dd, vol_r))
+}
+
+/// A：年高回撤深度（≥70% 起计分，越深越高）。
 fn score_oversold_a(dd: f64) -> f64 {
     let depth = (-dd).max(0.0);
-    if depth < 8.0 {
+    if depth < 70.0 {
         return 0.0;
     }
-    if depth <= 14.0 {
-        return 40.0 + 60.0 * ((depth - 8.0) / 6.0);
-    }
-    if depth <= 20.0 {
-        return 100.0;
-    }
-    // 20% → 100，28% → 35
-    100.0 - 65.0 * clip01((depth - 20.0) / 8.0)
+    // 70% → 55，85% → 100
+    55.0 + 45.0 * clip01((depth - 70.0) / 15.0)
 }
 
-/// 企稳：锤头收回、位置、相对大盘止跌、未创新低、跌幅温和。
-fn score_oversold_b(rs: f64, s: &StockDailyData, hist: Option<&[&StockDailyData]>) -> f64 {
-    let span = s.high - s.low;
-    let lower_share = if span.abs() < EPS {
-        0.5
-    } else {
-        ((s.close_price - s.low) / span).clamp(0.0, 1.0)
-    };
-    let b_hammer = 100.0 * clip01((lower_share - 0.25) / 0.55);
-
-    let pos = intra_pos(s);
-    let b_pos = if (0.35..=0.75).contains(&pos) {
+/// B：当日是否贴近区间新低（越贴新低越高）。
+fn score_oversold_b(s: &StockDailyData, hist: &[&StockDailyData]) -> f64 {
+    let period_min = hist
+        .iter()
+        .map(|b| b.low)
+        .chain([s.low])
+        .fold(f64::INFINITY, f64::min);
+    if !period_min.is_finite() || period_min <= EPS {
+        return 50.0;
+    }
+    let px = s.close_price.min(s.low);
+    let premium = (px / period_min - 1.0) * 100.0;
+    if premium <= 0.5 {
         100.0
-    } else if (0.20..0.35).contains(&pos) || (0.75..=0.85).contains(&pos) {
-        70.0
-    } else if pos < 0.20 {
+    } else if premium <= 2.0 {
+        85.0
+    } else if premium <= 5.0 {
+        65.0
+    } else {
         40.0
-    } else {
-        45.0
-    };
-
-    // RS 越接近 0 越好（相对市场止跌）
-    let b_rs = 100.0 * clip01((rs + RS_CAP) / (RS_CAP + 1.0));
-
-    let bars = hist_tail(hist);
-    let b_low = match bars.and_then(|b| b.last()) {
-        Some(prev) if s.low + EPS >= prev.low => 100.0,
-        Some(prev) if s.low > prev.low * 0.98 => 70.0,
-        Some(_) => 35.0,
-        None => 50.0,
-    };
-
-    let mag = s.change_pct.abs();
-    let b_mild = if mag <= 2.0 {
-        100.0
-    } else if mag <= 4.0 {
-        75.0
-    } else if mag <= 6.0 {
-        50.0
-    } else {
-        25.0
-    };
-
-    0.25 * b_hammer + 0.20 * b_pos + 0.20 * b_rs + 0.20 * b_low + 0.15 * b_mild
+    }
 }
 
-/// 量能：缩量优先；昨日下跌且今日缩量加分。
-fn score_oversold_c(s: &StockDailyData, hist: Option<&[&StockDailyData]>) -> f64 {
-    let Some(bars) = hist_tail(hist) else {
-        return 50.0;
-    };
-    let Some(prev) = bars.last() else {
-        return 50.0;
-    };
-    let ratio = s.amount / prev.amount.max(EPS);
-    let c_shrink = if ratio <= 0.7 {
-        100.0
-    } else if ratio <= 1.0 {
-        80.0
-    } else if ratio <= 1.3 {
-        55.0
-    } else if ratio <= 2.0 {
-        35.0
-    } else {
-        20.0
-    };
-    let bonus: f64 = if prev.change_pct < -1.0 && ratio <= 0.85 {
-        15.0
-    } else {
-        0.0
-    };
-    (c_shrink + bonus).min(100.0)
+/// C：放量倍数（2×→60，4×→100）。
+fn score_oversold_c(vol_r: f64) -> f64 {
+    if vol_r < VOL_SPIKE_RATIO {
+        return 0.0;
+    }
+    60.0 + 40.0 * clip01((vol_r - VOL_SPIKE_RATIO) / 2.0)
 }
 
 /// 上涨趋势 TopN。
@@ -523,7 +538,7 @@ pub fn calculate_intraday_alerts_at(
     }
 }
 
-/// 超跌反弹 TopN：入选看超跌，排序看企稳。
+/// 超跌反弹 TopN：年高回撤 ≥70% + 近 3 日/现价破新低 + 大阴 −10%+ + 放量 ≥2×。
 pub fn calculate_oversold_alerts(input: &MarketDataInput) -> IntradayAlertResult {
     calculate_oversold_alerts_at(input, SessionPhase::now())
 }
@@ -551,36 +566,18 @@ pub fn calculate_oversold_alerts_at(
     let r_mkt = r_mkt_of(&valid);
     let hist_map = build_hist_map(input);
 
-    let mut candidates: Vec<(&StockDailyData, f64, f64)> = Vec::new();
+    let mut scored: Vec<AlertItem> = Vec::new();
     for s in &valid {
-        if s.change_pct >= 0.0 || s.change_pct <= -LIMIT_PCT {
-            continue;
-        }
-        let hist = hist_map.get(&s.symbol).map(|v| v.as_slice());
-        if is_broken_trend(hist) {
-            continue;
-        }
-        let Some(dd) = drawdown_pct(s, hist) else {
+        let Some(hist) = oversold_hist(hist_map.get(&s.symbol).map(|v| v.as_slice())) else {
             continue;
         };
-        if dd > DD_MIN {
+        let Some((dd, vol_r)) = passes_oversold_filters(s, hist) else {
             continue;
-        }
+        };
         let rs = s.change_pct - r_mkt;
-        candidates.push((s, dd, rs));
-    }
-    candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
-    if candidates.len() > PRESELECT_K {
-        candidates.truncate(PRESELECT_K);
-    }
-    let candidate_size = candidates.len();
-
-    let mut scored: Vec<AlertItem> = Vec::with_capacity(candidates.len());
-    for (s, dd, rs) in candidates {
-        let hist = hist_map.get(&s.symbol).map(|v| v.as_slice());
         let a = score_oversold_a(dd);
-        let b = score_oversold_b(rs, s, hist);
-        let c = score_oversold_c(s, hist);
+        let b = score_oversold_b(s, hist);
+        let c = score_oversold_c(vol_r);
         let score = pw.w_a * a + pw.w_b * b + pw.w_c * c;
         scored.push(AlertItem {
             symbol: s.symbol.clone(),
@@ -592,21 +589,25 @@ pub fn calculate_oversold_alerts_at(
             drawdown_pct: dd,
             layers: AlertLayers { a, b, c },
             reason: format!(
-                "DD={:+.1}% stab={:.0} RS={:+.1}% R={:+.1}% phase={}",
+                "DD={:+.1}% vol={:.1}x R={:+.1}% phase={}",
                 dd,
-                b,
-                rs,
+                vol_r,
                 s.change_pct,
                 phase.as_str()
             ),
         });
     }
+    let candidate_size = scored.len();
 
     scored.sort_by(|x, y| {
         y.score
             .partial_cmp(&x.score)
             .unwrap_or(Ordering::Equal)
-            .then_with(|| y.layers.b.partial_cmp(&x.layers.b).unwrap_or(Ordering::Equal))
+            .then_with(|| {
+                x.drawdown_pct
+                    .partial_cmp(&y.drawdown_pct)
+                    .unwrap_or(Ordering::Equal)
+            })
             .then_with(|| y.amount.partial_cmp(&x.amount).unwrap_or(Ordering::Equal))
     });
 
@@ -716,49 +717,60 @@ mod tests {
         assert!(score_c(&heavy) > score_c(&light));
     }
 
-    #[test]
-    fn oversold_prefers_stabilizing_over_dump() {
-        let mut snaps = Vec::new();
-        for i in 1..=10 {
-            // 混合阴阳，避免 broken_trend；峰值逐步抬高（凑满 10 日回看）
-            let chg = if i % 2 == 0 { 0.5 } else { -0.3 };
-            let px = 10.5 + i as f64 * 0.2;
-            let date = format!("2026-09-{:02}", 20 + i);
-            snaps.push(MarketDailySnapshot {
-                date: date.clone(),
-                stocks: vec![
-                    hist_bar("DUMP.SH", &date, chg, px, 1.5e8),
-                    hist_bar("STAB.SH", &date, chg, px, 1.5e8),
-                    hist_bar("UP.SH", &date, 1.0, 10.0, 6.0e7),
-                ],
-            });
-        }
-        // DUMP: 贴日低、大跌、放量续砸
-        // STAB: 锤头收回、温和跌、缩量、未破昨低
+    fn push_day(snaps: &mut Vec<MarketDailySnapshot>, day: usize, stocks: Vec<StockDailyData>) {
         snaps.push(MarketDailySnapshot {
-            date: "2026-10-10".into(),
+            date: format!("2025-{:03}", day),
+            stocks,
+        });
+    }
+
+    /// 构造：峰值 100 → 现价约 25（−75%），近 3 日破新低 + 大阴 + 放量。
+    #[test]
+    fn oversold_year_crash_new_low_big_red_vol() {
+        let mut snaps = Vec::new();
+        // 日 1：高点 100；其后缓跌；末三日砸出新低并放量
+        for d in 1..=60 {
+            let (px, chg, amt) = if d == 1 {
+                (100.0, 0.0, 5.0e7)
+            } else if d <= 57 {
+                let px = 100.0 - (d as f64 - 1.0) * 1.0; // 缓跌到 ~43
+                (px.max(40.0), -1.0, 5.0e7)
+            } else if d == 58 {
+                (35.0, -12.0, 5.0e7) // 大阴但未放量
+            } else if d == 59 {
+                (30.0, -14.0, 5.0e7)
+            } else {
+                (28.0, -6.0, 5.0e7)
+            };
+            push_day(
+                &mut snaps,
+                d,
+                vec![
+                    hist_bar("CRASH.SH", &format!("2025-{:03}", d), chg, px, amt),
+                    hist_bar("MILD.SH", &format!("2025-{:03}", d), -0.5, 90.0 - d as f64 * 0.1, 5.0e7),
+                ],
+            );
+        }
+        // 当日：再破新低 + 大阴 + 2× 放量
+        snaps.push(MarketDailySnapshot {
+            date: "2025-061".into(),
             stocks: vec![
-                bar("DUMP.SH", -5.5, 2.5e8, 10.2, 10.3, 9.4, 9.45),
-                bar("STAB.SH", -1.5, 8.0e7, 10.0, 10.15, 9.85, 10.05),
-                bar("UP.SH", 2.0, 8.0e7, 10.0, 10.3, 9.9, 10.2),
+                bar("CRASH.SH", -11.0, 1.2e8, 28.0, 28.5, 24.5, 25.0),
+                bar("MILD.SH", -2.0, 5.0e7, 80.0, 80.5, 78.0, 78.5),
             ],
         });
         let r = calculate_oversold_alerts(&MarketDataInput { snapshots: snaps });
         assert!(
-            r.items.iter().all(|i| i.symbol != "UP.SH"),
-            "up day should not be oversold"
+            r.items.iter().any(|i| i.symbol == "CRASH.SH"),
+            "year crash + new low + big red + vol should hit: {:?}",
+            r.items
         );
-        let stab = r.items.iter().find(|i| i.symbol == "STAB.SH");
-        let dump = r.items.iter().find(|i| i.symbol == "DUMP.SH");
-        assert!(stab.is_some(), "stabilizing name should rank: {:?}", r.items);
-        if let (Some(s), Some(d)) = (stab, dump) {
-            assert!(
-                s.score > d.score,
-                "stab {:.1} should beat dump {:.1}",
-                s.score,
-                d.score
-            );
-        }
+        assert!(
+            r.items.iter().all(|i| i.symbol != "MILD.SH"),
+            "mild drawdown must be excluded"
+        );
+        let hit = r.items.iter().find(|i| i.symbol == "CRASH.SH").unwrap();
+        assert!(hit.drawdown_pct <= -70.0, "dd={}", hit.drawdown_pct);
     }
 
     #[test]
