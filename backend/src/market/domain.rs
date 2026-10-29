@@ -130,29 +130,29 @@ pub enum SignalType {
 impl SignalType {
     pub fn label(&self) -> &'static str {
         match self {
-            Self::StrongBullish => "强势上涨",
-            Self::SurgeWarning => "放量冲高",
-            Self::DivergenceWarning => "量价背离",
-            Self::WeakBullish => "缩量上涨",
-            Self::LowVolumeAccumulation => "低位放量",
-            Self::Neutral => "中性观望",
-            Self::PanicSelling => "恐慌抛售",
-            Self::Bottoming => "地量地价",
-            Self::VolumeDecline => "放量下跌",
+            Self::StrongBullish => "多头气势足",
+            Self::SurgeWarning => "冲得偏急",
+            Self::DivergenceWarning => "量价不太匹配",
+            Self::WeakBullish => "涨得有点虚",
+            Self::LowVolumeAccumulation => "低位量能起来了",
+            Self::Neutral => "暂时平静",
+            Self::PanicSelling => "抛压偏重",
+            Self::Bottoming => "量价都压得比较低",
+            Self::VolumeDecline => "跌的时候量不小",
         }
     }
 
     pub fn advice(&self) -> &'static str {
         match self {
-            Self::StrongBullish => "顺势做多",
-            Self::SurgeWarning => "警惕见顶，减仓",
-            Self::DivergenceWarning => "量价背离，警惕回调",
-            Self::WeakBullish => "动能不足，谨慎追高",
-            Self::LowVolumeAccumulation => "关注反弹信号",
-            Self::Neutral => "观望",
-            Self::PanicSelling => "关注超跌反弹",
-            Self::Bottoming => "关注底部机会",
-            Self::VolumeDecline => "风险大，观望",
+            Self::StrongBullish => "短线偏顺多头",
+            Self::SurgeWarning => "留意冲高后回落",
+            Self::DivergenceWarning => "后面可能松一点",
+            Self::WeakBullish => "追高要小心",
+            Self::LowVolumeAccumulation => "看有没有接力",
+            Self::Neutral => "先看看再说",
+            Self::PanicSelling => "留意砸完后的反应",
+            Self::Bottoming => "位置偏低，看有没有人接",
+            Self::VolumeDecline => "风险偏大，先观望",
         }
     }
 }

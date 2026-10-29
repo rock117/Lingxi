@@ -161,7 +161,7 @@ private fun SentimentContent(msi: MsiResult?, mtt: MttResult?) {
             SectionTitle("中期 MTT")
             LayerBar("中期趋势", mtt.value)
             Text(
-                "多 ${mtt.counts.bull} · 空 ${mtt.counts.bear} · 纠缠 ${mtt.counts.neutral}",
+                "多头 ${mtt.counts.bull} 家，空头 ${mtt.counts.bear} 家，纠缠 ${mtt.counts.neutral} 家",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
@@ -175,14 +175,14 @@ private fun SentimentContent(msi: MsiResult?, mtt: MttResult?) {
         if (today != null) {
             SectionTitle("今日三层")
             Text(
-                "只用当日盘面。方向：站哪边；强度：方向×波动幅度；约束：收在当日高低何处（高分偏强，非扣分）。点击一层看因子。",
+                "看的是今天这一天。点开一层能看具体因子；约束分高说明收得强，不是扣分。",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
             ExpandableMsiLayer(
                 title = "方向",
-                subtitle = "市场站哪边 · 约占今日一半",
+                subtitle = "市场站哪边",
                 score = today.layers.direction,
                 summary = layerSummary(MsiLayerKind.Direction, today.layers.direction),
                 factors = directionFactors(today.components, today.diagnostics),
@@ -193,7 +193,7 @@ private fun SentimentContent(msi: MsiResult?, mtt: MttResult?) {
             )
             ExpandableMsiLayer(
                 title = "强度",
-                subtitle = "涨跌有多用力（宽度×幅度）· 约占四分之一",
+                subtitle = "涨跌打得有多用力",
                 score = today.layers.intensity,
                 summary = layerSummary(MsiLayerKind.Intensity, today.layers.intensity),
                 factors = intensityFactors(today.components, today.diagnostics),
@@ -204,7 +204,7 @@ private fun SentimentContent(msi: MsiResult?, mtt: MttResult?) {
             )
             ExpandableMsiLayer(
                 title = "约束",
-                subtitle = "收在当日高低何处 · 约占四分之一",
+                subtitle = "收在当天高低的什么位置",
                 score = today.layers.constraint,
                 summary = layerSummary(MsiLayerKind.Constraint, today.layers.constraint),
                 factors = constraintFactors(today.components),
@@ -227,31 +227,34 @@ private fun SentimentContent(msi: MsiResult?, mtt: MttResult?) {
                 )
             }
 
-            SectionTitle("信号上下文")
+            SectionTitle("信号")
             Text(
-                "日内位置 ${today.signal.priceStatus} · ${"%.0f".format(today.signal.pricePosition * 100)}%",
+                "收在当天${priceStatusLabel(today.signal.priceStatus)}" +
+                    "（${"%.0f".format(today.signal.pricePosition * 100)}%）",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
-                "${today.signal.label} · ${today.signal.advice}",
+                listOf(today.signal.label, today.signal.advice)
+                    .filter { it.isNotBlank() }
+                    .joinToString("，"),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
-            SectionTitle("诊断")
+            SectionTitle("盘面一览")
             val d = today.diagnostics
             Text(
-                "样本 ${d.sampleSize} · 涨 ${d.upCount} / 跌 ${d.downCount} / 平 ${d.flatCount}",
+                "共看 ${d.sampleSize} 只，涨 ${d.upCount}、跌 ${d.downCount}、平 ${d.flatCount}",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
-                "涨停 ${d.limitUpCount} · 跌停 ${d.limitDownCount}",
+                "涨停 ${d.limitUpCount}，跌停 ${d.limitDownCount}",
                 style = MaterialTheme.typography.bodyMedium,
             )
             if (mtt != null) {
                 Text(
-                    "中期偏离中位 ${"%.1f".format(mtt.diagnostics.deviationMedian * 100)}%" +
-                        " · 20日新高新低 ${"%.1f".format(mtt.diagnostics.nhNl)}",
+                    "中期相对均线中位偏离 ${"%.1f".format(mtt.diagnostics.deviationMedian * 100)}%，" +
+                        "近20日新高相对新低 ${"%.1f".format(mtt.diagnostics.nhNl)}",
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
@@ -393,28 +396,25 @@ private fun ScoreProgress(score: Double, height: Dp = 8.dp) {
     )
 }
 
-private fun layerSummary(kind: MsiLayerKind, score: Double): String {
-    val degree = scoreDegreeLabel(score)
-    return when (kind) {
-        MsiLayerKind.Direction -> when {
-            score > 65 -> "家数、资金、结构多数同向偏多。$degree。"
-            score < 35 -> "家数、资金、结构多数同向偏空。$degree。"
-            score >= 60 -> "略偏多头一侧，尚未形成一致确认。$degree。"
-            score <= 40 -> "略偏空头一侧，尚未形成一致确认。$degree。"
-            else -> "多空维度互相抵消或信息不足。$degree。"
-        }
-        MsiLayerKind.Intensity -> when {
-            score > 65 -> "上涨侧占优且波动偏大，打得偏用力。$degree。"
-            score < 35 -> "下跌侧占优且波动偏大，打得偏用力（偏空）。$degree。"
-            score >= 60 -> "略偏多头用力，尚未极端。$degree。"
-            score <= 40 -> "略偏空头用力，尚未极端。$degree。"
-            else -> "方向不清晰，或波动偏小、力度不足。$degree。"
-        }
-        MsiLayerKind.Constraint -> when {
-            score > 65 -> "多数票收在当日偏高位（收得强；高分不是风险扣分）。$degree。"
-            score < 35 -> "多数票收在当日偏低位（收得弱）。$degree。"
-            else -> "日内收盘位置接近中性。$degree。"
-        }
+private fun layerSummary(kind: MsiLayerKind, score: Double): String = when (kind) {
+    MsiLayerKind.Direction -> when {
+        score > 65 -> "涨的家数和资金都在往上靠，市场站在多头这边。"
+        score < 35 -> "跌的家数和资金占上风，市场站在空头这边。"
+        score >= 60 -> "略微偏多，但还没拧成一股劲。"
+        score <= 40 -> "略微偏空，但还没拧成一股劲。"
+        else -> "多空差不多，谁也没占稳。"
+    }
+    MsiLayerKind.Intensity -> when {
+        score > 65 -> "涨的时候打得比较狠。"
+        score < 35 -> "跌的时候砸得比较狠。"
+        score >= 60 -> "多头用力稍大一点，还不算猛。"
+        score <= 40 -> "空头用力稍大一点，还不算猛。"
+        else -> "力度一般，方向也不清晰。"
+    }
+    MsiLayerKind.Constraint -> when {
+        score > 65 -> "多数票收在当天偏高的位置，收得挺强。"
+        score < 35 -> "多数票收在当天偏低的位置，收得偏弱。"
+        else -> "收盘位置不偏不倚。"
     }
 }
 
@@ -423,25 +423,26 @@ private fun factorExtremes(factors: List<FactorRow>): String? {
     val strongest = factors.maxBy { it.score }
     val weakest = factors.minBy { it.score }
     if (strongest.name == weakest.name) return null
-    return "相对最强：${strongest.name}（${"%.0f".format(strongest.score)}）；相对最弱：${weakest.name}（${"%.0f".format(weakest.score)}）"
+    return "这一层里，${strongest.name}最撑场面（${"%.0f".format(strongest.score)}），" +
+        "${weakest.name}偏拖后腿（${"%.0f".format(weakest.score)}）。"
 }
 
 private fun directionFactors(c: MsiComponents, d: MsiDiagnostics): List<FactorRow> = listOf(
     FactorRow(
         name = "宽度",
         score = c.breadth,
-        meaning = "上涨家数相对下跌家数的净优势（平盘不进分母）",
-        detail = "今日 涨 ${d.upCount} / 跌 ${d.downCount} / 平 ${d.flatCount}",
+        meaning = "涨的家数多，还是跌的多",
+        detail = "今天涨 ${d.upCount}、跌 ${d.downCount}、平 ${d.flatCount}",
     ),
     FactorRow(
         name = "资金",
         score = c.moneyFlow,
-        meaning = "上涨股成交额相对下跌股的净优势",
+        meaning = "钱更多流向上涨的票，还是下跌的票",
     ),
     FactorRow(
         name = "结构",
         score = c.structure,
-        meaning = "家数方向与等权均涨跌幅取平均确认；同向偏空为低分，背离靠近中性",
+        meaning = "家数方向和平均涨跌是否对得上；对不上就往中间靠",
     ),
 )
 
@@ -449,8 +450,8 @@ private fun intensityFactors(c: MsiComponents, d: MsiDiagnostics): List<FactorRo
     FactorRow(
         name = "有方向波动",
         score = c.directedMove,
-        meaning = "涨跌宽度 × 等权均绝对涨跌幅；跌得多且跌得深会压低分数",
-        detail = "均绝对涨跌 ${"%.2f".format(d.meanAbsRet)}%",
+        meaning = "涨跌面叠上波动幅度；跌得多又跌得深，分数会下来",
+        detail = "平均绝对涨跌约 ${"%.2f".format(d.meanAbsRet)}%",
     ),
 )
 
@@ -458,9 +459,18 @@ private fun constraintFactors(c: MsiComponents): List<FactorRow> = listOf(
     FactorRow(
         name = "日内位置",
         score = c.intradayPosition,
-        meaning = "收盘在当日最高最低之间的位置；收近最高偏强",
+        meaning = "收盘落在当天高低之间哪儿；越靠近最高越强",
     ),
 )
+
+private fun priceStatusLabel(raw: String): String = when (raw) {
+    "high_zone" -> "偏高位"
+    "upper_mid" -> "中上"
+    "mid_zone" -> "中部"
+    "lower_mid" -> "中下"
+    "low_zone" -> "偏低位"
+    else -> raw
+}
 
 @Composable
 private fun DualScoreHeader(msi: MsiResult?, mtt: MttResult?) {
@@ -500,7 +510,7 @@ private fun DualScoreHeader(msi: MsiResult?, mtt: MttResult?) {
         Spacer(modifier = Modifier.height(4.dp))
         val meta = buildList {
             msi?.today?.date?.let { add(it) }
-            msi?.let { add("近 ${it.recent.days} 日加权") }
+            msi?.let { add("近 ${it.recent.days} 日") }
             mtt?.let { add("MA${it.maMid}/${it.maLong}") }
             val ts = msi?.calculatedAt ?: mtt?.calculatedAt
             if (ts != null) add(ts)
