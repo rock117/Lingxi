@@ -1178,8 +1178,7 @@ private fun SearchHistoryList(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items.take(16).forEach { hit ->
-                val title = hit.name.ifBlank { hit.symbol }
-                val code = hit.symbol.ifBlank { hit.code }
+                val title = hit.name.ifBlank { hit.symbol.ifBlank { hit.code } }
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
@@ -1189,24 +1188,14 @@ private fun SearchHistoryList(
                         .padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(modifier = Modifier.padding(end = 2.dp)) {
-                        Text(
-                            title,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        if (code.isNotBlank() && code != title) {
-                            Text(
-                                code,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(end = 2.dp),
+                    )
                     Icon(
                         Icons.Default.Close,
                         contentDescription = "删除",

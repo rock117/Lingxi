@@ -2,6 +2,7 @@ package com.lingxi.app.notification
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -51,6 +52,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lingxi.app.data.model.IntradayAlertItem
 import com.lingxi.app.data.model.IntradayAlertPayload
 import com.lingxi.app.data.model.NotificationItem
+import com.lingxi.app.data.model.displayReason
 import com.lingxi.app.data.model.parseIntradayAlert
 import com.lingxi.app.viewmodel.NotificationViewModel
 import java.time.OffsetDateTime
@@ -129,7 +131,7 @@ fun NotificationListScreen(viewModel: NotificationViewModel) {
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "下拉刷新 · 长按可选中删除 · 点按展开",
+                        text = "下拉刷新 · 长按可选 · 点标题展开列表 · 点个股看理由",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -322,7 +324,7 @@ private fun NotificationCard(
     onToggleExpandUnread: () -> Unit,
 ) {
     val alert = item.parseIntradayAlert()
-    var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
+    var listExpanded by rememberSaveable(item.id) { mutableStateOf(false) }
 
     val container = when {
         selecting && selected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
@@ -330,73 +332,88 @@ private fun NotificationCard(
         else -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
     }
 
+    fun toggleListExpand() {
+        if (selecting) {
+            onClick()
+            return
+        }
+        val willExpand = !listExpanded
+        listExpanded = willExpand
+        if (willExpand) onToggleExpandUnread()
+    }
+
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(
-                onClick = {
-                    if (selecting) {
-                        onClick()
-                    } else {
-                        val willExpand = !expanded
-                        expanded = willExpand
-                        if (willExpand) onToggleExpandUnread()
-                    }
-                },
-                onLongClick = onLongClick,
-            ),
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = container),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (selecting) {
-                    Checkbox(
-                        checked = selected,
-                        onCheckedChange = { onClick() },
-                    )
-                }
-                Text(
-                    text = item.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = if (item.read) FontWeight.Normal else FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
-                )
-                if (!item.read) {
+            // 仅头部控制整卡展开/收起，避免与个股行抢点击
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .combinedClickable(
+                        onClick = { toggleListExpand() },
+                        onLongClick = onLongClick,
+                    ),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (selecting) {
+                        Checkbox(
+                            checked = selected,
+                            onCheckedChange = { onClick() },
+                        )
+                    }
                     Text(
-                        "未读",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(end = 4.dp),
+                        text = item.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = if (item.read) FontWeight.Normal else FontWeight.Bold,
+                        modifier = Modifier.weight(1f),
                     )
+                    if (!item.read) {
+                        Text(
+                            "未读",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.padding(end = 4.dp),
+                        )
+                    }
+                    if (!selecting) {
+                        Icon(
+                            imageVector = if (listExpanded) {
+                                Icons.Default.ExpandLess
+                            } else {
+                                Icons.Default.ExpandMore
+                            },
+                            contentDescription = if (listExpanded) "收起列表" else "展开列表",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
-                if (!selecting) {
-                    Icon(
-                        imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = if (expanded) "收起" else "展开",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    formatCreatedAt(item.createdAt),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                formatCreatedAt(item.createdAt),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
 
             if (!selecting) {
                 if (alert != null) {
                     Spacer(modifier = Modifier.height(10.dp))
-                    IntradayAlertContent(alert = alert, expanded = expanded)
+                    IntradayAlertContent(
+                        alert = alert,
+                        listExpanded = listExpanded,
+                        onToggleListExpand = { toggleListExpand() },
+                    )
                 } else {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         item.body,
                         style = MaterialTheme.typography.bodyMedium,
-                        maxLines = if (expanded) Int.MAX_VALUE else 4,
+                        maxLines = if (listExpanded) Int.MAX_VALUE else 4,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.clickable { toggleListExpand() },
                     )
                 }
             }
@@ -407,7 +424,8 @@ private fun NotificationCard(
 @Composable
 private fun IntradayAlertContent(
     alert: IntradayAlertPayload,
-    expanded: Boolean,
+    listExpanded: Boolean,
+    onToggleListExpand: () -> Unit,
 ) {
     Text(
         text = "大盘等权 ${formatSignedPct(alert.rMkt)}",
@@ -416,7 +434,7 @@ private fun IntradayAlertContent(
     )
     Spacer(modifier = Modifier.height(8.dp))
 
-    val visible = if (expanded) alert.items else alert.items.take(COLLAPSED_COUNT)
+    val visible = if (listExpanded) alert.items else alert.items.take(COLLAPSED_COUNT)
     visible.forEachIndexed { index, row ->
         if (index > 0) {
             HorizontalDivider(
@@ -424,23 +442,24 @@ private fun IntradayAlertContent(
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
             )
         }
-        AlertStockRow(rank = index + 1, item = row)
+        AlertStockRow(rank = index + 1, kind = alert.kind, item = row)
     }
 
     if (alert.items.size > COLLAPSED_COUNT) {
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = if (expanded) {
-                "点击收起"
+            text = if (listExpanded) {
+                "收起列表"
             } else {
                 "展开全部 ${alert.items.size} 只"
             },
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.clickable(onClick = onToggleListExpand),
         )
     }
 
-    AnimatedVisibility(visible = expanded && alert.date.isNotBlank()) {
+    AnimatedVisibility(visible = listExpanded && alert.date.isNotBlank()) {
         Column {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
@@ -453,56 +472,88 @@ private fun IntradayAlertContent(
 }
 
 @Composable
-private fun AlertStockRow(rank: Int, item: IntradayAlertItem) {
+private fun AlertStockRow(
+    rank: Int,
+    kind: String,
+    item: IntradayAlertItem,
+) {
     val code = item.symbol.substringBefore('.')
     val title = if (item.name.isNotBlank()) item.name else code
     val subtitle = if (item.name.isNotBlank()) code else item.symbol
+    var reasonExpanded by rememberSaveable(kind, item.symbol, rank) { mutableStateOf(false) }
+    val reasonText = remember(item, kind) { item.displayReason(kind) }
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "$rank",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(end = 10.dp),
-        )
-        Column(modifier = Modifier.weight(1f)) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { reasonExpanded = !reasonExpanded },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                text = title,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.labelSmall,
+                text = "$rank",
+                style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 10.dp),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = "%.0f".format(item.score),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = if (item.drawdownPct != 0.0) {
+                        "回撤 ${formatSignedPct(item.drawdownPct)}"
+                    } else {
+                        "相对 ${formatSignedPct(item.rs)}"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (
+                        (item.drawdownPct != 0.0 && item.drawdownPct >= 0) ||
+                            (item.drawdownPct == 0.0 && item.rs >= 0)
+                    ) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
+                )
+            }
+            Icon(
+                imageVector = if (reasonExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = if (reasonExpanded) "收起理由" else "上榜理由",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp),
             )
         }
-        Column(horizontalAlignment = Alignment.End) {
+        AnimatedVisibility(visible = reasonExpanded && reasonText.isNotBlank()) {
             Text(
-                text = "%.0f".format(item.score),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
+                text = "上榜理由：$reasonText",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 28.dp, top = 6.dp, end = 4.dp),
             )
+        }
+        AnimatedVisibility(visible = reasonExpanded && reasonText.isBlank()) {
             Text(
-                text = if (item.drawdownPct != 0.0) {
-                    "回撤 ${formatSignedPct(item.drawdownPct)}"
-                } else {
-                    "相对 ${formatSignedPct(item.rs)}"
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = if (
-                    (item.drawdownPct != 0.0 && item.drawdownPct >= 0) ||
-                        (item.drawdownPct == 0.0 && item.rs >= 0)
-                ) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.error
-                },
+                text = "上榜理由：暂无明细（旧通知可能未写入）",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 28.dp, top = 6.dp, end = 4.dp),
             )
         }
     }
