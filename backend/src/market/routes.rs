@@ -101,20 +101,16 @@ pub async fn sentiment(
     let days = days.unwrap_or(5).clamp(3, 30);
     let refresh = data_source::is_open_auction_session(db.inner()).await;
 
+    // 非交易时段：用日 K 现算并覆盖缓存。
+    // 盘中缓存的涨跌分布/涨跌停是盘中截面，收盘后若直接返回会对不齐雪球/东财收盘口径。
     if !refresh {
-        if let Some(cached) = result_cache::get_latest_msi(db.inner()).await? {
-            tracing::info!(
-                calculated_at = %cached.calculated_at,
-                "非交易时段：返回最近一条缓存 MSI"
-            );
-            return Ok(Json(cached));
-        }
-        tracing::info!("非交易时段无缓存，计算一次并落库");
+        tracing::info!("非交易时段：用日 K 重算 MSI（对齐收盘口径）");
     }
 
     let input = load_msi_input(db.inner(), days, miana.inner(), cache.inner()).await?;
     let result = calculator::calculate_msi(&input);
-    let trade_date = session::shanghai_today();
+    // 落库日期用截面交易日，避免跨日凌晨把「昨日收盘 MSI」写到「今日」键上
+    let trade_date = result.today.date.clone();
     result_cache::store_msi(db.inner(), &trade_date, &result).await?;
 
     tracing::info!(

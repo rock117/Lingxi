@@ -266,7 +266,7 @@ recent.series = series
 1. 从库加载最近 `N` 个开市日全市场日 K（`is_open` 且 `trade_date ≤ 上海今日`）。  
 2. 若处于盘中实时窗：用 Miana 实时覆盖/追加 **最新日** 截面（规则同既有 hybrid）。  
 3. 对装载结果调用 `calculate_msi`。  
-4. **缓存**：开市日连续竞价窗内每次重算，结果写入进程内存 + 表 `market_result_cache`（`kind=msi`，主键 `(kind, date)`，`payload` JSONB，不区分 `days`）。非交易时段取该 kind 下 `date` 最近一条返回；重启后可从库恢复。无缓存时（首次）计算一次并落库。
+4. **缓存**：开市日连续竞价窗内每次重算，结果写入进程内存 + 表 `market_result_cache`（`kind=msi`，主键 `(kind, date)`，`payload` JSONB，不区分 `days`）。非交易时段用**日 K 重算**并覆盖当日缓存（避免盘中截面的涨跌分布/涨跌停与雪球、东财收盘口径不一致）；落库 `date` 取截面交易日。
 
 ---
 

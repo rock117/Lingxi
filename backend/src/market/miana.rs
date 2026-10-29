@@ -68,6 +68,11 @@ impl RealtimeSnapshot {
         let open = self.open.filter(|v| *v > 0.0).unwrap_or(close);
         let high = self.high.filter(|v| *v > 0.0).unwrap_or(close.max(open));
         let low = self.low.filter(|v| *v > 0.0).unwrap_or(close.min(open));
+        // 优先用现价/昨收重算涨跌幅，避免 change_rate 缺省成 0 扭曲涨跌分布
+        let change_pct = match self.pre_close.filter(|v| *v > 1e-10) {
+            Some(pc) => (close / pc - 1.0) * 100.0,
+            None => self.change_rate.unwrap_or(0.0),
+        };
         StockDailyData {
             symbol: self.symbol.clone(),
             date: self.trade_date.clone(),
@@ -76,7 +81,7 @@ impl RealtimeSnapshot {
             low,
             close_price: close,
             amount: self.amount.unwrap_or(0.0).max(0.0),
-            change_pct: self.change_rate.unwrap_or(0.0),
+            change_pct,
         }
     }
 }
