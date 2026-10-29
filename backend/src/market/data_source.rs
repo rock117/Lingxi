@@ -490,6 +490,7 @@ pub async fn load_stock_latest_quote(
     }
 
     let as_of = session::shanghai_today_naive();
+    // 多取 1 根：用前一交易日 close 作昨收（Miana 历史 K 常缺 preClose）
     let sql = r#"
 SELECT
     k.trade_date,
@@ -506,20 +507,25 @@ INNER JOIN sc_trade_calendar c
 WHERE k.symbol = $1
   AND k.trade_date <= $2
 ORDER BY k.trade_date DESC
-LIMIT 1
+LIMIT 2
 "#;
-    let row = Row::find_by_statement(Statement::from_sql_and_values(
+    let rows = Row::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         sql,
         [symbol.into(), as_of.into()],
     ))
-    .one(db)
+    .all(db)
     .await?;
 
-    Ok(row.map(|r| {
-        let chg = change_pct(r.close, r.pre_close);
-        let amp = if r.pre_close > 1e-10 {
-            (r.high - r.low) / r.pre_close * 100.0
+    Ok(rows.first().map(|r| {
+        let pre = rows
+            .get(1)
+            .map(|p| p.close)
+            .filter(|v| *v > 1e-10)
+            .unwrap_or(0.0);
+        let chg = change_pct(r.close, pre);
+        let amp = if pre > 1e-10 {
+            (r.high - r.low) / pre * 100.0
         } else {
             0.0
         };
@@ -529,9 +535,9 @@ LIMIT 1
             high: r.high,
             low: r.low,
             close: r.close,
-            pre_close: r.pre_close,
+            pre_close: pre,
             change_pct: chg,
-            change_amount: r.close - r.pre_close,
+            change_amount: if pre > 1e-10 { r.close - pre } else { 0.0 },
             amount: r.amount,
             volume: r.volume,
             amplitude: amp,
@@ -540,12 +546,14 @@ LIMIT 1
 }
 
 /// 单票最近 `days` 个开市日 K 线（按日期升序）。
+/// 涨跌幅用前一交易日 `close` 计算（不依赖常为空的 `pre_close`）；多取 1 日作锚点。
 pub async fn load_stock_recent_klines(
     db: &DatabaseConnection,
     symbol: &str,
     days: usize,
 ) -> Result<Vec<StockDailyData>, DbErr> {
     let days = days.max(1);
+    let fetch_days = days + 1;
     let as_of = session::shanghai_today_naive();
     let sql = r#"
 WITH dates AS (
@@ -575,14 +583,20 @@ ORDER BY k.trade_date ASC
     let rows = KlineRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         sql,
-        [symbol.into(), (days as i64).into(), as_of.into()],
+        [symbol.into(), (fetch_days as i64).into(), as_of.into()],
     ))
     .all(db)
     .await?;
 
-    Ok(rows
-        .into_iter()
-        .map(|row| StockDailyData {
+    let mut prev_close: Option<f64> = None;
+    let mut out: Vec<StockDailyData> = Vec::with_capacity(rows.len());
+    for row in rows {
+        let chg = match prev_close {
+            Some(pc) => change_pct(row.close, pc),
+            None => 0.0,
+        };
+        prev_close = Some(row.close);
+        out.push(StockDailyData {
             symbol: row.symbol,
             date: row.trade_date.format("%Y-%m-%d").to_string(),
             open: row.open,
@@ -590,9 +604,14 @@ ORDER BY k.trade_date ASC
             low: row.low,
             close_price: row.close,
             amount: row.amount,
-            change_pct: change_pct(row.close, row.pre_close),
-        })
-        .collect())
+            change_pct: chg,
+        });
+    }
+    if out.len() > days {
+        let skip = out.len() - days;
+        out = out.split_off(skip);
+    }
+    Ok(out)
 }
 
 /// 活跃股票完整代码（`代码.市场后缀`）。
@@ -670,16 +689,26 @@ fn rows_to_input(rows: Vec<KlineRow>) -> MarketDataInput {
             low: row.low,
             close_price: row.close,
             amount: row.amount.max(0.0),
-            change_pct: change_pct(row.close, row.pre_close),
+            // 先占位；下面按标的用前一日 close 重算
+            change_pct: 0.0,
         };
         by_date.entry(row.trade_date).or_default().push(stock);
     }
 
+    let mut prev_close: HashMap<String, f64> = HashMap::new();
     let snapshots = by_date
         .into_iter()
-        .map(|(d, stocks)| MarketDailySnapshot {
-            date: d.format("%Y-%m-%d").to_string(),
-            stocks,
+        .map(|(d, mut stocks)| {
+            for s in &mut stocks {
+                if let Some(pc) = prev_close.get(&s.symbol).copied() {
+                    s.change_pct = change_pct(s.close_price, pc);
+                }
+                prev_close.insert(s.symbol.clone(), s.close_price);
+            }
+            MarketDailySnapshot {
+                date: d.format("%Y-%m-%d").to_string(),
+                stocks,
+            }
         })
         .collect();
 
@@ -762,8 +791,14 @@ mod tests {
         assert_eq!(input.snapshots[0].date, "2026-10-09");
         assert_eq!(input.snapshots[0].stocks.len(), 2);
         assert_eq!(input.snapshots[1].stocks.len(), 1);
-        assert!((input.snapshots[0].stocks[0].change_pct - 5.0).abs() < 1e-9
-            || (input.snapshots[0].stocks[1].change_pct - 5.0).abs() < 1e-9);
+        // 首日无前收 → 0；次日用前一日 close：10.6/10.5-1
+        assert!(
+            input.snapshots[0]
+                .stocks
+                .iter()
+                .all(|s| s.change_pct.abs() < 1e-9)
+        );
+        assert!((input.snapshots[1].stocks[0].change_pct - (10.6 / 10.5 - 1.0) * 100.0).abs() < 1e-9);
     }
 
     #[test]
