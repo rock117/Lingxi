@@ -1,5 +1,10 @@
 package com.lingxi.app.data.api
 
+import com.lingxi.app.data.model.AiStatus
+import com.lingxi.app.data.model.AssistantChatRequest
+import com.lingxi.app.data.model.AssistantChatResponse
+import com.lingxi.app.data.model.AssistantSession
+import com.lingxi.app.data.model.AssistantSessionDetail
 import com.lingxi.app.data.model.Condition
 import com.lingxi.app.data.model.CreateConditionRequest
 import com.lingxi.app.data.model.FundStatsMeta
@@ -128,4 +133,19 @@ interface LingxiApi {
 
     @DELETE("api/notifications")
     suspend fun deleteAllNotifications()
+
+    @GET("api/ai/status")
+    suspend fun aiStatus(): AiStatus
+
+    @GET("api/ai/sessions")
+    suspend fun aiSessions(): List<AssistantSession>
+
+    @GET("api/ai/sessions/{id}")
+    suspend fun aiSession(@Path("id") id: Long): AssistantSessionDetail
+
+    @DELETE("api/ai/sessions/{id}")
+    suspend fun deleteAiSession(@Path("id") id: Long)
+
+    @POST("api/ai/chat")
+    suspend fun aiChat(@Body body: AssistantChatRequest): AssistantChatResponse
 }

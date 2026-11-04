@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Assessment
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,12 +40,14 @@ private enum class MoreDest {
 @Composable
 fun MoreTab(
     marketViewModel: MarketViewModel,
+    onOpenAssistant: () -> Unit = {},
 ) {
     var dest by rememberSaveable { mutableStateOf(MoreDest.Menu) }
 
     when (dest) {
         MoreDest.Menu -> MoreMenuScreen(
             onFundStats = { dest = MoreDest.FundStats },
+            onAssistant = onOpenAssistant,
         )
         MoreDest.FundStats -> Column(modifier = Modifier.fillMaxSize()) {
             MoreSubHeader(title = "A股财报统计", onBack = { dest = MoreDest.Menu })
@@ -71,6 +74,7 @@ private fun MoreSubHeader(title: String, onBack: () -> Unit) {
 @Composable
 private fun MoreMenuScreen(
     onFundStats: () -> Unit,
+    onAssistant: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -88,6 +92,13 @@ private fun MoreMenuScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(modifier = Modifier.height(16.dp))
+        MoreMenuRow(
+            icon = Icons.Default.SmartToy,
+            title = "智能助手",
+            subtitle = "金融问答 · 多轮对话",
+            onClick = onAssistant,
+        )
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
         MoreMenuRow(
             icon = Icons.Default.Assessment,
             title = "财报统计",

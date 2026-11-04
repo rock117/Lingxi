@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -47,6 +48,7 @@ fun HomeScreen(
     screenViewModel: ScreenViewModel,
     notificationViewModel: NotificationViewModel,
     onOpenSettings: () -> Unit,
+    onOpenAssistant: (String?) -> Unit = {},
     onComposeScreen: (String?) -> Unit,
     onEditScreen: (Long) -> Unit,
     onRunScreen: (Long) -> Unit,
@@ -85,6 +87,9 @@ fun HomeScreen(
             TopAppBar(
                 title = { Text(title) },
                 actions = {
+                    IconButton(onClick = { onOpenAssistant(null) }) {
+                        Icon(Icons.Default.SmartToy, contentDescription = "助手")
+                    }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "设置")
                     }
@@ -167,6 +172,7 @@ fun HomeScreen(
                     initialSymbol = null,
                     showBack = false,
                     embedded = true,
+                    onAskAssistant = { sym -> onOpenAssistant("帮我看看 $sym") },
                 )
                 3 -> SectorTab(
                     viewModel = marketViewModel,
@@ -177,7 +183,10 @@ fun HomeScreen(
                     },
                 )
                 4 -> NotificationListScreen(viewModel = notificationViewModel)
-                else -> MoreTab(marketViewModel = marketViewModel)
+                else -> MoreTab(
+                    marketViewModel = marketViewModel,
+                    onOpenAssistant = { onOpenAssistant(null) },
+                )
             }
         }
     }

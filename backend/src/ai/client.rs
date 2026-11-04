@@ -31,6 +31,59 @@ pub struct ScreenDraft {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessageDto {
+    pub role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCallDto>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallDto {
+    pub id: String,
+    #[serde(rename = "type", default = "default_tool_type")]
+    pub call_type: String,
+    pub function: ToolFnCall,
+}
+
+fn default_tool_type() -> String {
+    "function".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolFnCall {
+    pub name: String,
+    /// 模型给出的 JSON 字符串参数。
+    pub arguments: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolSpec {
+    #[serde(rename = "type")]
+    pub tool_type: &'static str,
+    pub function: ToolFnSpec,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolFnSpec {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub parameters: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChatCompletionOut {
+    pub content: Option<String>,
+    pub tool_calls: Vec<ToolCallDto>,
+    pub model: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct ChatResponse {
     choices: Vec<ChatChoice>,
@@ -39,12 +92,14 @@ struct ChatResponse {
 
 #[derive(Debug, Deserialize)]
 struct ChatChoice {
-    message: ChatMessage,
+    message: ChatMessageRaw,
 }
 
 #[derive(Debug, Deserialize)]
-struct ChatMessage {
+struct ChatMessageRaw {
     content: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<ToolCallDto>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,6 +135,76 @@ impl AiClient {
     pub async fn chat(&self, system: &str, user: &str) -> Result<String> {
         let (text, _) = self.chat_raw(system, user).await?;
         Ok(text)
+    }
+
+    /// 多轮 messages + 可选 tools（OpenAI 兼容）。
+    pub async fn chat_completion(
+        &self,
+        messages: &[ChatMessageDto],
+        tools: Option<&[ToolSpec]>,
+    ) -> Result<ChatCompletionOut> {
+        self.require_enabled()?;
+        let url = format!("{}/chat/completions", self.base_url);
+        let mut body = json!({
+            "model": self.model,
+            "temperature": 0.3,
+            "stream": false,
+            "thinking": { "type": "disabled" },
+            "messages": messages,
+        });
+        if let Some(tools) = tools {
+            if !tools.is_empty() {
+                body["tools"] = serde_json::to_value(tools)?;
+                body["tool_choice"] = json!("auto");
+            }
+        }
+
+        debug!(model = %self.model, url = %url, tools = tools.map(|t| t.len()).unwrap_or(0), "AI chat_completion");
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context("AI HTTP 请求失败")?;
+
+        let status = resp.status();
+        let bytes = resp.bytes().await.context("读取 AI 响应失败")?;
+        if !status.is_success() {
+            let err_body = String::from_utf8_lossy(&bytes);
+            warn!(%status, body = %truncate(&err_body, 500), "AI 接口错误");
+            return Err(anyhow!("AI 接口 HTTP {status}: {}", truncate(&err_body, 300)));
+        }
+
+        let parsed: ChatResponse =
+            serde_json::from_slice(&bytes).context("解析 AI ChatResponse 失败")?;
+        let msg = parsed
+            .choices
+            .first()
+            .map(|c| &c.message)
+            .ok_or_else(|| anyhow!("AI 返回空 choices"))?;
+        let content = msg
+            .content
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let tool_calls = msg.tool_calls.clone().unwrap_or_default();
+        if content.is_none() && tool_calls.is_empty() {
+            return Err(anyhow!("AI 返回空 content 且无 tool_calls"));
+        }
+        let model = parsed.model.unwrap_or_else(|| self.model.clone());
+        info!(
+            model = %model,
+            chars = content.as_ref().map(|s| s.len()).unwrap_or(0),
+            tool_calls = tool_calls.len(),
+            "AI chat_completion 完成"
+        );
+        Ok(ChatCompletionOut {
+            content,
+            tool_calls,
+            model,
+        })
     }
 
     /// 解释引擎已算好的 JSON 摘要。
@@ -190,6 +315,7 @@ impl AiClient {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .ok_or_else(|| anyhow!("AI 返回空 content"))?;
+        // chat_raw 路径忽略 tool_calls
         let model = parsed.model.unwrap_or_else(|| self.model.clone());
         info!(model = %model, chars = text.len(), "AI chat 完成");
         Ok((text, model))

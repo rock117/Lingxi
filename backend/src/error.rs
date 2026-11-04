@@ -11,6 +11,8 @@ pub enum AppError {
     NotFound,
     #[error("参数错误: {0}")]
     BadRequest(String),
+    #[error("AI 未启用：请配置 AI_API_KEY")]
+    AiDisabled,
     #[error("内部错误: {0}")]
     Internal(#[from] anyhow::Error),
 }
@@ -26,6 +28,7 @@ impl AppError {
         match self {
             AppError::NotFound => "not_found",
             AppError::BadRequest(_) => "bad_request",
+            AppError::AiDisabled => "ai_disabled",
             AppError::Db(_) => "db",
             AppError::Internal(_) => "internal",
         }
@@ -46,6 +49,13 @@ impl<'r> Responder<'r, 'static> for AppError {
                 Status::BadRequest,
                 ErrorResponse {
                     error: "bad_request".into(),
+                    message: self.to_string(),
+                },
+            ),
+            AppError::AiDisabled => (
+                Status::ServiceUnavailable,
+                ErrorResponse {
+                    error: "ai_disabled".into(),
                     message: self.to_string(),
                 },
             ),

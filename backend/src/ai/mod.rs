@@ -1,11 +1,15 @@
-//! Backend 内部 AI 能力（无 App UI、无对外 `/api/ai/*`）。
-//! 规范见 `docs/ai.md`。
-//!
-//! 供推送/任务等模块按需调用；未接线前允许 dead_code。
+//! Backend AI：个股解释 + 全能助手（见 `docs/ai.md` / `docs/assistant.md`）。
 
-#[allow(dead_code)]
+pub(crate) mod chat;
 pub(crate) mod client;
 pub mod prompts;
+pub(crate) mod tools;
 
-#[allow(unused_imports)] // 供其它 crate 模块 `use crate::ai::…`
+#[allow(unused_imports)]
+pub use chat::{
+    delete_session, get_session, list_sessions, run_chat, AiStatus, AssistantStreamEvent,
+    ChatRequest, ChatResponse, MessageOut, SessionDetail, SessionOut,
+};
+#[allow(unused_imports)]
 pub use client::{AiClient, ExplainResult, ScreenDraft};
+pub use tools::ToolContext;

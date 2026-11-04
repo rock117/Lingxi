@@ -26,6 +26,10 @@ pub struct AppConfig {
     pub ai_model: String,
     /// AI HTTP 超时秒数。
     pub ai_timeout_secs: u64,
+    /// 助手单轮最大工具往返次数。
+    pub ai_max_tool_rounds: u32,
+    /// 助手回放历史消息条数。
+    pub ai_history_limit: u32,
 }
 
 impl Default for AppConfig {
@@ -66,6 +70,14 @@ impl Default for AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(30),
+            ai_max_tool_rounds: env::var("AI_MAX_TOOL_ROUNDS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3),
+            ai_history_limit: env::var("AI_HISTORY_LIMIT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(12),
         }
     }
 }

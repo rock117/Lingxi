@@ -41,6 +41,7 @@ import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -98,6 +99,7 @@ fun StockAnalyzeScreen(
     /** 嵌在首页 Tab 时不画顶栏，由 Home 提供。 */
     embedded: Boolean = false,
     onBack: () -> Unit = {},
+    onAskAssistant: (String) -> Unit = {},
 ) {
     val result by viewModel.stockAnalyze.collectAsStateWithLifecycle()
     val loading by viewModel.stockAnalyzeLoading.collectAsStateWithLifecycle()
@@ -225,6 +227,9 @@ fun StockAnalyzeScreen(
                     refreshLoading = loading && result != null,
                     onSearch = { searchOpen = true },
                     onRefresh = { viewModel.loadStockAnalyze(selectedSymbol) },
+                    onAskAssistant = {
+                        if (displaySymbol.isNotBlank()) onAskAssistant(displaySymbol)
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 4.dp),
@@ -380,6 +385,14 @@ fun StockAnalyzeScreen(
                             }
                         }
                     },
+                    actions = {
+                        val sym = displaySymbol.takeIf { it.isNotBlank() }
+                        if (sym != null) {
+                            TextButton(onClick = { onAskAssistant(sym) }) {
+                                Text("问问助手")
+                            }
+                        }
+                    },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = MaterialTheme.colorScheme.surface,
                     ),
@@ -434,6 +447,7 @@ private fun CompactStockChrome(
     refreshLoading: Boolean,
     onSearch: () -> Unit,
     onRefresh: () -> Unit,
+    onAskAssistant: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -485,6 +499,11 @@ private fun CompactStockChrome(
                 )
             }
             Spacer(modifier = Modifier.width(4.dp))
+        }
+        if (symbol.isNotBlank()) {
+            TextButton(onClick = onAskAssistant) {
+                Text("助手", style = MaterialTheme.typography.labelMedium)
+            }
         }
         IconButton(onClick = onSearch) {
             Icon(Icons.Default.Search, contentDescription = "换股搜索")

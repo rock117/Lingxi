@@ -16,6 +16,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.lingxi.app.assistant.AssistantScreen
 import com.lingxi.app.condition.ScreenComposeScreen
 import com.lingxi.app.condition.ScreenResultScreen
 import com.lingxi.app.condition.StockAnalyzeScreen
@@ -25,6 +26,7 @@ import com.lingxi.app.notification.NotificationHelper
 import com.lingxi.app.service.LingxiService
 import com.lingxi.app.settings.SettingsScreen
 import com.lingxi.app.theme.LingxiTheme
+import com.lingxi.app.viewmodel.AssistantViewModel
 import com.lingxi.app.viewmodel.MarketViewModel
 import com.lingxi.app.viewmodel.NotificationViewModel
 import com.lingxi.app.viewmodel.ScreenViewModel
@@ -35,6 +37,7 @@ class MainActivity : ComponentActivity() {
     private val screenViewModel: ScreenViewModel by viewModels()
     private val notificationViewModel: NotificationViewModel by viewModels()
     private val settingsViewModel: SettingsViewModel by viewModels()
+    private val assistantViewModel: AssistantViewModel by viewModels()
 
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -57,6 +60,7 @@ class MainActivity : ComponentActivity() {
                     screenViewModel = screenViewModel,
                     notificationViewModel = notificationViewModel,
                     settingsViewModel = settingsViewModel,
+                    assistantViewModel = assistantViewModel,
                 )
             }
         }
@@ -90,6 +94,7 @@ private fun LingxiNav(
     screenViewModel: ScreenViewModel,
     notificationViewModel: NotificationViewModel,
     settingsViewModel: SettingsViewModel,
+    assistantViewModel: AssistantViewModel,
 ) {
     val navController = rememberNavController()
 
@@ -100,6 +105,9 @@ private fun LingxiNav(
                 screenViewModel = screenViewModel,
                 notificationViewModel = notificationViewModel,
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                onOpenAssistant = { prefill ->
+                    navController.navigate(Routes.assistant(prefill))
+                },
                 onComposeScreen = { typeId ->
                     navController.navigate(Routes.screenCompose(typeId))
                 },
@@ -181,6 +189,9 @@ private fun LingxiNav(
                     screenViewModel.clearStockAnalyze()
                     navController.popBackStack()
                 },
+                onAskAssistant = { sym ->
+                    navController.navigate(Routes.assistant("帮我看看 $sym"))
+                },
             )
         }
         composable(
@@ -197,6 +208,20 @@ private fun LingxiNav(
                     screenViewModel.clearStockAnalyze()
                     navController.popBackStack()
                 },
+                onAskAssistant = { sym ->
+                    navController.navigate(Routes.assistant("帮我看看 $sym"))
+                },
+            )
+        }
+        composable(
+            route = Routes.ASSISTANT_PREFILL,
+            arguments = listOf(navArgument("prefill") { type = NavType.StringType }),
+        ) { entry ->
+            val prefill = Routes.decodeAssistantPrefill(entry.arguments?.getString("prefill"))
+            AssistantScreen(
+                viewModel = assistantViewModel,
+                prefill = prefill,
+                onBack = { navController.popBackStack() },
             )
         }
     }

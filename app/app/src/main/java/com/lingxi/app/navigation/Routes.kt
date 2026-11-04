@@ -10,6 +10,17 @@ object Routes {
     const val SCREEN_RESULT = "screen/result/{conditionId}"
     const val STOCK_ANALYZE = "stock/analyze"
     const val STOCK_ANALYZE_SYMBOL = "stock/analyze/{symbol}"
+    const val ASSISTANT = "assistant"
+    const val ASSISTANT_PREFILL = "assistant/{prefill}"
+
+    fun assistant(prefill: String? = null): String {
+        val p = prefill?.trim().orEmpty()
+        return if (p.isEmpty()) "$ASSISTANT/_"
+        else "$ASSISTANT/${p.replace('/', '／').replace('?', '？')}"
+    }
+
+    fun decodeAssistantPrefill(raw: String?): String? =
+        raw?.takeIf { it.isNotBlank() && it != "_" }?.replace('／', '/')?.replace('？', '?')
 
     fun conditionEdit(id: Long) = "condition/edit/$id"
 
