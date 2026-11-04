@@ -57,6 +57,18 @@ pub struct AlertItem {
     pub drawdown_pct: f64,
     pub layers: AlertLayers,
     pub reason: String,
+    /// 触发大阴的交易日（YYYY-MM-DD）；超跌用，趋势为空。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crash_day: Option<String>,
+    /// 该日涨跌幅 %。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crash_day_pct: Option<f64>,
+    /// 触发放量（≥2×均额）的交易日。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vol_day: Option<String>,
+    /// 该日成交额 / 此前均额。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vol_day_ratio: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -379,9 +391,8 @@ fn oversold_red_day_ok(s: &StockDailyData, hist: &[&StockDailyData]) -> bool {
     curr <= TODAY_CHANGE_MAX
 }
 
-/// 近 3 日至少一日成交额 ≥ 2× 此前均额，或当日（可按竞价进度外推）≥ 2×。
-/// `today_amount`：已外推全日等量；≤0 表示未满 10 分钟等、不计当日。
-fn vol_spike_ratio(hist: &[&StockDailyData], today_amount: f64) -> Option<f64> {
+/// 近 3 日之前的均额（放量分母）。
+fn vol_base_avg(hist: &[&StockDailyData]) -> Option<f64> {
     let n = hist.len();
     let recent_n = OVERSOLD_RECENT_DAYS.min(n);
     let base_end = n.saturating_sub(recent_n);
@@ -395,8 +406,18 @@ fn vol_spike_ratio(hist: &[&StockDailyData], today_amount: f64) -> Option<f64> {
     }
     let avg = base.iter().map(|b| b.amount).sum::<f64>() / base.len() as f64;
     if avg <= EPS {
-        return None;
+        None
+    } else {
+        Some(avg)
     }
+}
+
+/// 近 3 日至少一日成交额 ≥ 2× 此前均额，或当日（可按竞价进度外推）≥ 2×。
+/// `today_amount`：已外推全日等量；≤0 表示未满 10 分钟等、不计当日。
+fn vol_spike_ratio(hist: &[&StockDailyData], today_amount: f64) -> Option<f64> {
+    let avg = vol_base_avg(hist)?;
+    let n = hist.len();
+    let recent_n = OVERSOLD_RECENT_DAYS.min(n);
     let mut recent_max = hist[n - recent_n..]
         .iter()
         .map(|b| b.amount)
@@ -407,11 +428,110 @@ fn vol_spike_ratio(hist: &[&StockDailyData], today_amount: f64) -> Option<f64> {
     Some(recent_max / avg)
 }
 
+/// 入选时定位：哪天大阴、哪天放量（可能非当日）。
+#[derive(Debug, Clone)]
+struct OversoldEventDays {
+    crash_day: String,
+    crash_day_pct: f64,
+    vol_day: String,
+    vol_day_ratio: f64,
+}
+
+/// 选出暴跌日与放量日：优先「同日又暴跌又放量」；否则暴跌取跌幅最大日，放量取倍数最大日。
+fn find_oversold_event_days(
+    s: &StockDailyData,
+    hist: &[&StockDailyData],
+    today_amount: f64,
+) -> Option<OversoldEventDays> {
+    let avg = vol_base_avg(hist)?;
+    let n = hist.len();
+    let recent_n = OVERSOLD_RECENT_DAYS.min(n);
+    let recent = &hist[n - recent_n..];
+
+    #[derive(Clone)]
+    struct Cand {
+        date: String,
+        change_pct: f64,
+        vol_ratio: f64,
+        is_today: bool,
+    }
+
+    let mut cands: Vec<Cand> = recent
+        .iter()
+        .map(|b| Cand {
+            date: b.date.clone(),
+            change_pct: b.change_pct,
+            vol_ratio: b.amount / avg,
+            is_today: false,
+        })
+        .collect();
+    if today_amount > EPS {
+        cands.push(Cand {
+            date: s.date.clone(),
+            change_pct: s.change_pct,
+            vol_ratio: today_amount / avg,
+            is_today: true,
+        });
+    } else {
+        // 当日额未计入放量，但仍可用于「今日大阴」标注
+        cands.push(Cand {
+            date: s.date.clone(),
+            change_pct: s.change_pct,
+            vol_ratio: 0.0,
+            is_today: true,
+        });
+    }
+
+    let today_big_red = s.change_pct < 0.0 && s.change_pct.abs() >= BIG_MOVE_PCT;
+    let is_big_red = |c: &Cand| c.change_pct < 0.0 && c.change_pct.abs() >= BIG_MOVE_PCT;
+    let is_vol = |c: &Cand| c.vol_ratio + EPS >= VOL_SPIKE_RATIO;
+
+    // 暴跌日：路径 2 用今日；否则近窗内跌幅最深的大阴日
+    let crash = if today_big_red {
+        cands.iter().find(|c| c.is_today).cloned()
+    } else {
+        cands
+            .iter()
+            .filter(|c| !c.is_today && is_big_red(c))
+            .min_by(|a, b| {
+                a.change_pct
+                    .partial_cmp(&b.change_pct)
+                    .unwrap_or(Ordering::Equal)
+            })
+            .cloned()
+    }?;
+
+    // 放量日：优先与暴跌同日且达标；否则倍数最大
+    let vol = cands
+        .iter()
+        .filter(|c| is_vol(c))
+        .max_by(|a, b| {
+            let a_same = a.date == crash.date;
+            let b_same = b.date == crash.date;
+            match (a_same, b_same) {
+                (true, false) => Ordering::Greater,
+                (false, true) => Ordering::Less,
+                _ => a
+                    .vol_ratio
+                    .partial_cmp(&b.vol_ratio)
+                    .unwrap_or(Ordering::Equal),
+            }
+        })
+        .cloned()?;
+
+    Some(OversoldEventDays {
+        crash_day: crash.date,
+        crash_day_pct: crash.change_pct,
+        vol_day: vol.date,
+        vol_day_ratio: vol.vol_ratio,
+    })
+}
+
 fn passes_oversold_filters(
     s: &StockDailyData,
     hist: &[&StockDailyData],
     today_amount_scale: f64,
-) -> Option<(f64, f64)> {
+) -> Option<(f64, f64, OversoldEventDays)> {
     let dd = year_drawdown_pct(s, hist)?;
     if dd > DD_YEAR_MIN {
         return None;
@@ -432,7 +552,28 @@ fn passes_oversold_filters(
     if vol_r < VOL_SPIKE_RATIO {
         return None;
     }
-    Some((dd, vol_r))
+    let ev = find_oversold_event_days(s, hist, today_amt)?;
+    Some((dd, vol_r, ev))
+}
+
+fn build_oversold_reason(
+    dd: f64,
+    vol_r: f64,
+    s: &StockDailyData,
+    phase: SessionPhase,
+    ev: &OversoldEventDays,
+) -> String {
+    format!(
+        "DD={:+.1}% vol={:.1}x crash={}/{:+.1}% vol_day={}/{:.1}x R={:+.1}% phase={}",
+        dd,
+        vol_r,
+        ev.crash_day,
+        ev.crash_day_pct,
+        ev.vol_day,
+        ev.vol_day_ratio,
+        s.change_pct,
+        phase.as_str()
+    )
 }
 
 /// A：年高回撤深度（≥70% 起计分，越深越高）。
@@ -538,6 +679,10 @@ pub fn calculate_intraday_alerts_at(
             drawdown_pct: 0.0,
             layers: AlertLayers { a, b, c },
             reason: format!("{} phase={}", build_reason(a, b, c, rs), phase.as_str()),
+            crash_day: None,
+            crash_day_pct: None,
+            vol_day: None,
+            vol_day_ratio: None,
         });
     }
 
@@ -610,7 +755,7 @@ fn calculate_oversold_alerts_scaled(
         let Some(hist) = oversold_hist(hist_map.get(&s.symbol).map(|v| v.as_slice())) else {
             continue;
         };
-        let Some((dd, vol_r)) = passes_oversold_filters(s, hist, today_amount_scale) else {
+        let Some((dd, vol_r, ev)) = passes_oversold_filters(s, hist, today_amount_scale) else {
             continue;
         };
         let rs = s.change_pct - r_mkt;
@@ -627,13 +772,11 @@ fn calculate_oversold_alerts_scaled(
             amount: s.amount,
             drawdown_pct: dd,
             layers: AlertLayers { a, b, c },
-            reason: format!(
-                "DD={:+.1}% vol={:.1}x R={:+.1}% phase={}",
-                dd,
-                vol_r,
-                s.change_pct,
-                phase.as_str()
-            ),
+            reason: build_oversold_reason(dd, vol_r, s, phase, &ev),
+            crash_day: Some(ev.crash_day),
+            crash_day_pct: Some(ev.crash_day_pct),
+            vol_day: Some(ev.vol_day),
+            vol_day_ratio: Some(ev.vol_day_ratio),
         });
     }
     let candidate_size = scored.len();
@@ -794,8 +937,14 @@ mod tests {
         snaps.push(MarketDailySnapshot {
             date: "2025-061".into(),
             stocks: vec![
-                bar("CRASH.SH", -11.0, 1.2e8, 28.0, 28.5, 24.5, 25.0),
-                bar("MILD.SH", -2.0, 5.0e7, 80.0, 80.5, 78.0, 78.5),
+                StockDailyData {
+                    date: "2025-061".into(),
+                    ..bar("CRASH.SH", -11.0, 1.2e8, 28.0, 28.5, 24.5, 25.0)
+                },
+                StockDailyData {
+                    date: "2025-061".into(),
+                    ..bar("MILD.SH", -2.0, 5.0e7, 80.0, 80.5, 78.0, 78.5)
+                },
             ],
         });
         let r = calculate_oversold_alerts(&MarketDataInput { snapshots: snaps });
@@ -810,6 +959,65 @@ mod tests {
         );
         let hit = r.items.iter().find(|i| i.symbol == "CRASH.SH").unwrap();
         assert!(hit.drawdown_pct <= -70.0, "dd={}", hit.drawdown_pct);
+        assert_eq!(hit.crash_day.as_deref(), Some("2025-061"));
+        assert_eq!(hit.vol_day.as_deref(), Some("2025-061"));
+    }
+
+    /// 路径 1：前几日暴跌放量、当日未大阴 → reason/字段应标出那一天。
+    #[test]
+    fn oversold_lists_prior_crash_vol_day() {
+        let mut snaps = Vec::new();
+        for d in 1..=60 {
+            let (px, chg, amt) = if d == 1 {
+                (100.0, 0.0, 5.0e7)
+            } else if d <= 57 {
+                let px = 100.0 - (d as f64 - 1.0) * 1.0;
+                (px.max(40.0), -1.0, 5.0e7)
+            } else if d == 58 {
+                (35.0, -8.0, 5.0e7)
+            } else if d == 59 {
+                // 暴跌 + 放量（相对此前 ~5e7 约 2.4×）
+                (28.0, -14.0, 1.2e8)
+            } else {
+                (26.0, -5.0, 5.0e7)
+            };
+            push_day(
+                &mut snaps,
+                d,
+                vec![hist_bar(
+                    "PRIOR.SH",
+                    &format!("2025-{:03}", d),
+                    chg,
+                    px,
+                    amt,
+                )],
+            );
+        }
+        // 当日：贴近新低、小跌，未达 −10%，靠路径 1 入选
+        snaps.push(MarketDailySnapshot {
+            date: "2025-061".into(),
+            stocks: vec![StockDailyData {
+                date: "2025-061".into(),
+                ..bar("PRIOR.SH", -1.0, 5.0e7, 26.0, 26.2, 25.0, 25.5)
+            }],
+        });
+        let r = calculate_oversold_alerts_scaled(
+            &MarketDataInput { snapshots: snaps },
+            SessionPhase::AmMid,
+            1.0,
+        );
+        let hit = r
+            .items
+            .iter()
+            .find(|i| i.symbol == "PRIOR.SH")
+            .expect("prior crash+vol should qualify");
+        assert_eq!(hit.crash_day.as_deref(), Some("2025-059"));
+        assert_eq!(hit.vol_day.as_deref(), Some("2025-059"));
+        assert!(
+            hit.reason.contains("crash=2025-059"),
+            "reason should list prior crash day: {}",
+            hit.reason
+        );
     }
 
     #[test]

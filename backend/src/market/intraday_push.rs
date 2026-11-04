@@ -231,7 +231,48 @@ fn short_code(symbol: &str) -> &str {
     symbol.split('.').next().unwrap_or(symbol)
 }
 
-fn format_item_line(rank: usize, i: &AlertItem, oversold: bool) -> String {
+fn short_md(date: &str) -> String {
+    if date.len() >= 10 && date.as_bytes().get(4) == Some(&b'-') {
+        date[5..10].to_string()
+    } else {
+        date.to_string()
+    }
+}
+
+/// 暴跌/放量若不在推送当日，附带具体日期（同日合并一句）。
+fn format_prior_spike_note(i: &AlertItem, today: &str) -> Option<String> {
+    let crash_d = i.crash_day.as_deref()?;
+    let vol_d = i.vol_day.as_deref()?;
+    let crash_pct = i.crash_day_pct?;
+    let vol_r = i.vol_day_ratio?;
+    let crash_today = crash_d == today;
+    let vol_today = vol_d == today;
+    if crash_today && vol_today {
+        return None;
+    }
+    if crash_d == vol_d {
+        return Some(format!(
+            "{}暴跌{:+.1}%放量{:.1}×",
+            short_md(crash_d),
+            crash_pct,
+            vol_r
+        ));
+    }
+    let mut parts = Vec::new();
+    if crash_today {
+        parts.push(format!("今日暴跌{:+.1}%", crash_pct));
+    } else {
+        parts.push(format!("{}暴跌{:+.1}%", short_md(crash_d), crash_pct));
+    }
+    if vol_today {
+        parts.push(format!("今日放量{:.1}×", vol_r));
+    } else {
+        parts.push(format!("{}放量{:.1}×", short_md(vol_d), vol_r));
+    }
+    Some(parts.join(" "))
+}
+
+fn format_item_line(rank: usize, i: &AlertItem, oversold: bool, today: &str) -> String {
     let code = short_code(&i.symbol);
     let name_part = if i.name.is_empty() {
         code.to_string()
@@ -239,10 +280,15 @@ fn format_item_line(rank: usize, i: &AlertItem, oversold: bool) -> String {
         format!("{}({})", i.name, code)
     };
     if oversold {
-        format!(
+        let mut line = format!(
             "{}. {} 得分{:.0} 回撤{:+.1}% 涨跌{:+.1}%",
             rank, name_part, i.score, i.drawdown_pct, i.change_pct
-        )
+        );
+        if let Some(note) = format_prior_spike_note(i, today) {
+            line.push(' ');
+            line.push_str(&note);
+        }
+        line
     } else {
         format!(
             "{}. {} 得分{:.0} 相对{:+.1}%",
@@ -254,7 +300,7 @@ fn format_item_line(rank: usize, i: &AlertItem, oversold: bool) -> String {
 fn format_body(r: &IntradayAlertResult, oversold: bool) -> String {
     let mut lines = vec![format!("大盘等权 {:+.2}%", r.r_mkt)];
     for (idx, item) in r.items.iter().take(5).enumerate() {
-        lines.push(format_item_line(idx + 1, item, oversold));
+        lines.push(format_item_line(idx + 1, item, oversold, &r.date));
     }
     if r.items.len() > 5 {
         lines.push(format!("…共 {} 只，打开 App 查看全部", r.items.len()));

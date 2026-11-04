@@ -179,7 +179,9 @@ score = 0.25\,A + 0.45\,B + 0.30\,C
 排序：`score` ↓，`drawdown_pct` 升序（更深优先），`amount` ↓；取前 10 且 \(score\ge SCORE_MIN_OVERSOLD\)。
 
 推送标题：`超跌反弹 Top{N}`；系统条件名「超跌反弹股」。  
-`items[].drawdown_pct` 写入 \(DD_i\)；`reason` 含 `DD=… vol=…x`。
+`items[].drawdown_pct` 写入 \(DD_i\)；`reason` 含 `DD=… vol=…x crash=日期/涨跌% vol_day=日期/倍数x`。  
+
+若大阴或放量**不在推送当日**（路径 1 等），推送正文与上榜理由会写出具体日期，例如 `10-28暴跌-14.0%放量2.4×`；若暴跌日与放量日不同则分写。字段：`crash_day` / `crash_day_pct` / `vol_day` / `vol_day_ratio`。
 
 ---
 

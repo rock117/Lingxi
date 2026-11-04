@@ -442,7 +442,12 @@ private fun IntradayAlertContent(
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
             )
         }
-        AlertStockRow(rank = index + 1, kind = alert.kind, item = row)
+        AlertStockRow(
+            rank = index + 1,
+            kind = alert.kind,
+            alertDate = alert.date,
+            item = row,
+        )
     }
 
     if (alert.items.size > COLLAPSED_COUNT) {
@@ -475,13 +480,14 @@ private fun IntradayAlertContent(
 private fun AlertStockRow(
     rank: Int,
     kind: String,
+    alertDate: String,
     item: IntradayAlertItem,
 ) {
     val code = item.symbol.substringBefore('.')
     val title = if (item.name.isNotBlank()) item.name else code
     val subtitle = if (item.name.isNotBlank()) code else item.symbol
     var reasonExpanded by rememberSaveable(kind, item.symbol, rank) { mutableStateOf(false) }
-    val reasonText = remember(item, kind) { item.displayReason(kind) }
+    val reasonText = remember(item, kind, alertDate) { item.displayReason(kind, alertDate) }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
