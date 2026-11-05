@@ -239,17 +239,12 @@ fn short_md(date: &str) -> String {
     }
 }
 
-/// 暴跌/放量若不在推送当日，附带具体日期（同日合并一句）。
-fn format_prior_spike_note(i: &AlertItem, today: &str) -> Option<String> {
+/// 暴跌/放量日说明（始终带 MM-DD 日期；同日合并一句）。
+fn format_spike_note(i: &AlertItem) -> Option<String> {
     let crash_d = i.crash_day.as_deref()?;
     let vol_d = i.vol_day.as_deref()?;
     let crash_pct = i.crash_day_pct?;
     let vol_r = i.vol_day_ratio?;
-    let crash_today = crash_d == today;
-    let vol_today = vol_d == today;
-    if crash_today && vol_today {
-        return None;
-    }
     if crash_d == vol_d {
         return Some(format!(
             "{}暴跌{:+.1}%放量{:.1}×",
@@ -258,18 +253,13 @@ fn format_prior_spike_note(i: &AlertItem, today: &str) -> Option<String> {
             vol_r
         ));
     }
-    let mut parts = Vec::new();
-    if crash_today {
-        parts.push(format!("今日暴跌{:+.1}%", crash_pct));
-    } else {
-        parts.push(format!("{}暴跌{:+.1}%", short_md(crash_d), crash_pct));
-    }
-    if vol_today {
-        parts.push(format!("今日放量{:.1}×", vol_r));
-    } else {
-        parts.push(format!("{}放量{:.1}×", short_md(vol_d), vol_r));
-    }
-    Some(parts.join(" "))
+    Some(format!(
+        "{}暴跌{:+.1}% {}放量{:.1}×",
+        short_md(crash_d),
+        crash_pct,
+        short_md(vol_d),
+        vol_r
+    ))
 }
 
 fn format_item_line(rank: usize, i: &AlertItem, oversold: bool, today: &str) -> String {
@@ -281,10 +271,15 @@ fn format_item_line(rank: usize, i: &AlertItem, oversold: bool, today: &str) -> 
     };
     if oversold {
         let mut line = format!(
-            "{}. {} 得分{:.0} 回撤{:+.1}% 涨跌{:+.1}%",
-            rank, name_part, i.score, i.drawdown_pct, i.change_pct
+            "{}. {} 得分{:.0} 回撤{:+.1}% {}涨跌{:+.1}%",
+            rank,
+            name_part,
+            i.score,
+            i.drawdown_pct,
+            short_md(today),
+            i.change_pct
         );
-        if let Some(note) = format_prior_spike_note(i, today) {
+        if let Some(note) = format_spike_note(i) {
             line.push(' ');
             line.push_str(&note);
         }

@@ -20,6 +20,8 @@ data class AlertLayers(
     val a: Double = 0.0,
     val b: Double = 0.0,
     val c: Double = 0.0,
+    /** 超跌：当日跌幅分；趋势为 0 */
+    val d: Double = 0.0,
 )
 
 @Serializable
@@ -60,16 +62,22 @@ fun IntradayAlertItem.displayReason(kind: String, alertDate: String = ""): Strin
     when (kind) {
         "intraday_oversold" -> {
             if (drawdownPct != 0.0) parts += "年高回撤 ${"%+.1f%%".format(drawdownPct)}"
-            if (changePct != 0.0) parts += "当日 ${"%+.1f%%".format(changePct)}"
-            priorSpikeNote(alertDate)?.let { parts += it }
+            if (alertDate.isNotBlank() || changePct != 0.0) {
+                val dayLabel = if (alertDate.isNotBlank()) shortMd(alertDate) else "当日"
+                parts += "${dayLabel}涨跌 ${"%+.1f%%".format(changePct)}"
+            }
+            spikeNote()?.let { parts += it }
                 ?: parseVolFromReason(reason)?.let { parts += "放量 $it" }
             layers?.let {
-                parts += "分项 回撤${it.a.toInt()}/贴新低${it.b.toInt()}/放量${it.c.toInt()}"
+                parts += "分项 回撤${it.a.toInt()}/贴新低${it.b.toInt()}/放量${it.c.toInt()}/跌幅${it.d.toInt()}"
             }
         }
         else -> {
             if (rs != 0.0) parts += "相对大盘 ${"%+.1f%%".format(rs)}"
-            if (changePct != 0.0) parts += "当日 ${"%+.1f%%".format(changePct)}"
+            if (changePct != 0.0) {
+                val dayLabel = if (alertDate.isNotBlank()) shortMd(alertDate) else "当日"
+                parts += "${dayLabel}涨跌 ${"%+.1f%%".format(changePct)}"
+            }
             dominantLayerLabel(reason, layers)?.let { parts += "主因 $it" }
             layers?.let {
                 parts += "分项 强度${it.a.toInt()}/五日${it.b.toInt()}/买点${it.c.toInt()}"
@@ -83,26 +91,17 @@ fun IntradayAlertItem.displayReason(kind: String, alertDate: String = ""): Strin
 private fun shortMd(date: String): String =
     if (date.length >= 10 && date[4] == '-') date.substring(5, 10) else date
 
-/** 非当日的暴跌/放量日说明；当日暴跌放量则返回 null（不重复罗列）。 */
-private fun IntradayAlertItem.priorSpikeNote(alertDate: String): String? {
+/** 暴跌/放量日说明（始终带 MM-DD；同日合并）。 */
+private fun IntradayAlertItem.spikeNote(): String? {
     val crashD = crashDay ?: parseCrashDayFromReason(reason)?.first ?: return null
     val crashPct = crashDayPct ?: parseCrashDayFromReason(reason)?.second ?: return null
     val volD = volDay ?: parseVolDayFromReason(reason)?.first
     val volR = volDayRatio ?: parseVolDayFromReason(reason)?.second
-    val today = alertDate.trim()
-    val crashToday = today.isNotEmpty() && crashD == today
-    val volToday = today.isNotEmpty() && volD == today
-    if (crashToday && (volToday || volD == null)) return null
     return when {
         volD != null && volR != null && crashD == volD ->
             "${shortMd(crashD)}暴跌${"%+.1f%%".format(crashPct)}放量${"%.1f".format(volR)}×"
-        volD != null && volR != null -> {
-            val a = if (crashToday) "今日暴跌${"%+.1f%%".format(crashPct)}"
-            else "${shortMd(crashD)}暴跌${"%+.1f%%".format(crashPct)}"
-            val b = if (volToday) "今日放量${"%.1f".format(volR)}×"
-            else "${shortMd(volD)}放量${"%.1f".format(volR)}×"
-            "$a $b"
-        }
+        volD != null && volR != null ->
+            "${shortMd(crashD)}暴跌${"%+.1f%%".format(crashPct)} ${shortMd(volD)}放量${"%.1f".format(volR)}×"
         else -> "${shortMd(crashD)}暴跌${"%+.1f%%".format(crashPct)}"
     }
 }

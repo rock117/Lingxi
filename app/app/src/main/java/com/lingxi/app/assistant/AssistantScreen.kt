@@ -60,6 +60,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lingxi.app.data.model.ChatUiMessage
+import com.lingxi.app.ui.AssistantEntryIcon
 import com.lingxi.app.viewmodel.AssistantViewModel
 import kotlinx.coroutines.launch
 
@@ -274,6 +275,8 @@ private fun EmptyState(symbolPrefill: String?, onPick: (String) -> Unit) {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        AssistantEntryIcon(size = 56.dp, iconSize = 30.dp, contentDescription = null)
+        Spacer(Modifier.height(16.dp))
         Text("Lingxi 金融助手", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
         Text(

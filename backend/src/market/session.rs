@@ -25,12 +25,15 @@ pub enum SessionPhase {
     Off,
 }
 
-/// 相位下的合成权重（三项和为 1）与最低分上浮。
+/// 相位下的合成权重与最低分上浮。
+/// 趋势用 A/B/C（`w_d=0`）；超跌用 A/B/C/D（当日跌幅），各项和为 1。
 #[derive(Debug, Clone, Copy)]
 pub struct PhaseWeights {
     pub w_a: f64,
     pub w_b: f64,
     pub w_c: f64,
+    /// 超跌：当日涨跌幅层；趋势恒为 0。
+    pub w_d: f64,
     pub score_floor_boost: f64,
 }
 
@@ -84,97 +87,119 @@ impl SessionPhase {
         Self::from_shanghai_minutes(minutes)
     }
 
-    /// 上涨趋势：开盘/变盘/尾盘压纯 RS、抬量价确认。
+    /// 上涨趋势：开盘/变盘/尾盘压纯 RS、抬量价确认（无 D 层）。
     pub fn trend_weights(self) -> PhaseWeights {
         match self {
             Self::Open => PhaseWeights {
                 w_a: 0.25,
                 w_b: 0.30,
                 w_c: 0.45,
+                w_d: 0.0,
                 score_floor_boost: 3.0,
             },
             Self::AmActive => PhaseWeights {
                 w_a: 0.32,
                 w_b: 0.30,
                 w_c: 0.38,
+                w_d: 0.0,
                 score_floor_boost: 0.0,
             },
             Self::AmMid | Self::Off => PhaseWeights {
                 w_a: 0.35,
                 w_b: 0.30,
                 w_c: 0.35,
+                w_d: 0.0,
                 score_floor_boost: 0.0,
             },
             Self::Lunch => PhaseWeights {
                 w_a: 0.28,
                 w_b: 0.30,
                 w_c: 0.42,
+                w_d: 0.0,
                 score_floor_boost: 2.0,
             },
             Self::PmDrive => PhaseWeights {
                 w_a: 0.35,
                 w_b: 0.28,
                 w_c: 0.37,
+                w_d: 0.0,
                 score_floor_boost: 0.0,
             },
             Self::PmTurn => PhaseWeights {
                 w_a: 0.25,
                 w_b: 0.28,
                 w_c: 0.47,
+                w_d: 0.0,
                 score_floor_boost: 3.0,
             },
             Self::Close => PhaseWeights {
                 w_a: 0.22,
                 w_b: 0.28,
                 w_c: 0.50,
+                w_d: 0.0,
                 score_floor_boost: 5.0,
             },
         }
     }
 
-    /// 超跌：开盘/变盘/尾盘更重企稳，压「深回撤」。
+    /// 超跌：A 年高回撤 / B 贴新低 / C 放量 / D 当日跌幅。
+    /// D 权重按散户恐慌与主力承接时段心理调节（见 `docs/intraday_alert.md` §3.1 / §5.3）。
     pub fn oversold_weights(self) -> PhaseWeights {
         match self {
+            // 开盘：散户隔夜情绪宣泄、噪声大；跌幅有信息但仍次于贴新低
             Self::Open => PhaseWeights {
-                w_a: 0.15,
-                w_b: 0.55,
-                w_c: 0.30,
+                w_a: 0.12,
+                w_b: 0.40,
+                w_c: 0.26,
+                w_d: 0.22,
                 score_floor_boost: 2.0,
             },
+            // 早盘方向渐清：深跌更代表真实抛压
             Self::AmActive => PhaseWeights {
-                w_a: 0.20,
-                w_b: 0.50,
-                w_c: 0.30,
+                w_a: 0.15,
+                w_b: 0.38,
+                w_c: 0.22,
+                w_d: 0.25,
                 score_floor_boost: 0.0,
             },
+            // 上午平稳 / 非竞价：基准
             Self::AmMid | Self::Off => PhaseWeights {
-                w_a: 0.25,
-                w_b: 0.45,
-                w_c: 0.30,
+                w_a: 0.18,
+                w_b: 0.37,
+                w_c: 0.25,
+                w_d: 0.20,
                 score_floor_boost: 0.0,
             },
+            // 午后重开：假动作多，压当日跌幅权、提企稳与量
             Self::Lunch => PhaseWeights {
-                w_a: 0.18,
-                w_b: 0.52,
-                w_c: 0.30,
+                w_a: 0.15,
+                w_b: 0.42,
+                w_c: 0.28,
+                w_d: 0.15,
                 score_floor_boost: 2.0,
             },
+            // 午后主攻：主力布局窗，跌幅与承接并重
             Self::PmDrive => PhaseWeights {
-                w_a: 0.22,
-                w_b: 0.48,
-                w_c: 0.30,
+                w_a: 0.15,
+                w_b: 0.35,
+                w_c: 0.25,
+                w_d: 0.25,
                 score_floor_boost: 0.0,
             },
+            // 两点半变盘：散户恐慌/游资博弈，当日跌幅权重最高
             Self::PmTurn => PhaseWeights {
-                w_a: 0.15,
-                w_b: 0.55,
-                w_c: 0.30,
+                w_a: 0.12,
+                w_b: 0.33,
+                w_c: 0.25,
+                w_d: 0.30,
                 score_floor_boost: 3.0,
             },
+            // 尾盘：避隔夜散户砸盘、主力或吸筹，跌幅权高
             Self::Close => PhaseWeights {
-                w_a: 0.12,
-                w_b: 0.58,
-                w_c: 0.30,
+                w_a: 0.10,
+                w_b: 0.35,
+                w_c: 0.27,
+                w_d: 0.28,
                 score_floor_boost: 4.0,
             },
         }
@@ -427,10 +452,16 @@ mod tests {
     }
 
     #[test]
-    fn close_raises_oversold_stabilize_weight() {
+    fn close_raises_oversold_today_drop_weight() {
         let mid = SessionPhase::AmMid.oversold_weights();
         let close = SessionPhase::Close.oversold_weights();
-        assert!(close.w_b > mid.w_b);
+        let turn = SessionPhase::PmTurn.oversold_weights();
+        assert!(close.w_d > mid.w_d);
         assert!(close.w_a < mid.w_a);
+        assert!(turn.w_d >= close.w_d);
+        for pw in [mid, close, turn] {
+            let sum = pw.w_a + pw.w_b + pw.w_c + pw.w_d;
+            assert!((sum - 1.0).abs() < 1e-9, "weights sum={sum}");
+        }
     }
 }

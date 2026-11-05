@@ -12,7 +12,6 @@ import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -37,6 +36,7 @@ import com.lingxi.app.market.MoreTab
 import com.lingxi.app.market.SectorTab
 import com.lingxi.app.market.SentimentScreen
 import com.lingxi.app.notification.NotificationListScreen
+import com.lingxi.app.ui.AssistantEntryIcon
 import com.lingxi.app.viewmodel.MarketViewModel
 import com.lingxi.app.viewmodel.NotificationViewModel
 import com.lingxi.app.viewmodel.ScreenViewModel
@@ -88,7 +88,7 @@ fun HomeScreen(
                 title = { Text(title) },
                 actions = {
                     IconButton(onClick = { onOpenAssistant(null) }) {
-                        Icon(Icons.Default.SmartToy, contentDescription = "助手")
+                        AssistantEntryIcon()
                     }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "设置")

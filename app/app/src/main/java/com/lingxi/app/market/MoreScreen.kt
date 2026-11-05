@@ -14,7 +14,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Assessment
-import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -27,9 +26,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.lingxi.app.ui.AssistantEntryIcon
 import com.lingxi.app.viewmodel.MarketViewModel
 
 private enum class MoreDest {
@@ -93,14 +92,27 @@ private fun MoreMenuScreen(
         )
         Spacer(modifier = Modifier.height(16.dp))
         MoreMenuRow(
-            icon = Icons.Default.SmartToy,
+            icon = {
+                AssistantEntryIcon(
+                    size = 36.dp,
+                    iconSize = 20.dp,
+                    contentDescription = null,
+                )
+            },
             title = "智能助手",
             subtitle = "金融问答 · 多轮对话",
             onClick = onAssistant,
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
         MoreMenuRow(
-            icon = Icons.Default.Assessment,
+            icon = {
+                Icon(
+                    Icons.Default.Assessment,
+                    contentDescription = null,
+                    modifier = Modifier.size(28.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
             title = "财报统计",
             subtitle = "全市场赚钱占比 · 增长 · 现金流",
             onClick = onFundStats,
@@ -111,7 +123,7 @@ private fun MoreMenuScreen(
 
 @Composable
 private fun MoreMenuRow(
-    icon: ImageVector,
+    icon: @Composable () -> Unit,
     title: String,
     subtitle: String,
     onClick: () -> Unit,
@@ -124,7 +136,7 @@ private fun MoreMenuRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(28.dp))
+        icon()
         Column(modifier = Modifier.weight(1f)) {
             Text(title, fontWeight = FontWeight.Medium)
             Text(

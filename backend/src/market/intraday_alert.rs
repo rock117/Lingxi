@@ -40,6 +40,9 @@ pub struct AlertLayers {
     pub a: f64,
     pub b: f64,
     pub c: f64,
+    /// 超跌：当日跌幅分；趋势为 0。
+    #[serde(default)]
+    pub d: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -617,6 +620,25 @@ fn score_oversold_c(vol_r: f64) -> f64 {
     60.0 + 40.0 * clip01((vol_r - VOL_SPIKE_RATIO) / 2.0)
 }
 
+/// D：当日跌幅越大分越高（路径 1 允许小反弹时给低分）。
+fn score_oversold_d(change_pct: f64) -> f64 {
+    if change_pct >= 0.0 {
+        // 0%→35，逼近 +2%→20
+        return 20.0 + 15.0 * clip01((TODAY_CHANGE_MAX - change_pct) / TODAY_CHANGE_MAX);
+    }
+    let drop = (-change_pct).max(0.0);
+    if drop < 2.0 {
+        35.0 + 15.0 * (drop / 2.0)
+    } else if drop < 5.0 {
+        50.0 + 20.0 * ((drop - 2.0) / 3.0)
+    } else if drop < 10.0 {
+        70.0 + 20.0 * ((drop - 5.0) / 5.0)
+    } else {
+        // −10%→90，−15%+→100
+        90.0 + 10.0 * clip01((drop - 10.0) / 5.0)
+    }
+}
+
 /// 上涨趋势 TopN。
 pub fn calculate_intraday_alerts(input: &MarketDataInput) -> IntradayAlertResult {
     calculate_intraday_alerts_at(input, SessionPhase::now())
@@ -677,7 +699,7 @@ pub fn calculate_intraday_alerts_at(
             change_pct: s.change_pct,
             amount: s.amount,
             drawdown_pct: 0.0,
-            layers: AlertLayers { a, b, c },
+            layers: AlertLayers { a, b, c, d: 0.0 },
             reason: format!("{} phase={}", build_reason(a, b, c, rs), phase.as_str()),
             crash_day: None,
             crash_day_pct: None,
@@ -762,7 +784,8 @@ fn calculate_oversold_alerts_scaled(
         let a = score_oversold_a(dd);
         let b = score_oversold_b(s, hist);
         let c = score_oversold_c(vol_r);
-        let score = pw.w_a * a + pw.w_b * b + pw.w_c * c;
+        let d = score_oversold_d(s.change_pct);
+        let score = pw.w_a * a + pw.w_b * b + pw.w_c * c + pw.w_d * d;
         scored.push(AlertItem {
             symbol: s.symbol.clone(),
             name: String::new(),
@@ -771,7 +794,7 @@ fn calculate_oversold_alerts_scaled(
             change_pct: s.change_pct,
             amount: s.amount,
             drawdown_pct: dd,
-            layers: AlertLayers { a, b, c },
+            layers: AlertLayers { a, b, c, d },
             reason: build_oversold_reason(dd, vol_r, s, phase, &ev),
             crash_day: Some(ev.crash_day),
             crash_day_pct: Some(ev.crash_day_pct),
@@ -961,6 +984,13 @@ mod tests {
         assert!(hit.drawdown_pct <= -70.0, "dd={}", hit.drawdown_pct);
         assert_eq!(hit.crash_day.as_deref(), Some("2025-061"));
         assert_eq!(hit.vol_day.as_deref(), Some("2025-061"));
+        assert!(
+            hit.layers.d >= 90.0,
+            "−11% today should score D high, got {}",
+            hit.layers.d
+        );
+        assert!(score_oversold_d(-12.0) > score_oversold_d(-3.0));
+        assert!(score_oversold_d(-3.0) > score_oversold_d(1.0));
     }
 
     /// 路径 1：前几日暴跌放量、当日未大阴 → reason/字段应标出那一天。
