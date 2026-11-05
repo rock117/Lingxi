@@ -1,5 +1,6 @@
 package com.lingxi.app.assistant
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -22,15 +24,18 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AddComment
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
@@ -55,12 +60,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lingxi.app.data.model.ChatUiMessage
 import com.lingxi.app.ui.AssistantEntryIcon
+import com.lingxi.app.ui.AssistantMark
 import com.lingxi.app.viewmodel.AssistantViewModel
 import kotlinx.coroutines.launch
 
@@ -182,27 +191,46 @@ fun AssistantScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding),
+                    .padding(padding)
+                    // edge-to-edge 下抬起输入区，避免被输入法挡住
+                    .imePadding(),
             ) {
-                if (ui.status?.aiEnabled == false) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.errorContainer,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            "助手未启用（服务端未配置 AI）。其它行情功能仍可用。",
-                            modifier = Modifier.padding(12.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
+                when {
+                    ui.status?.aiEnabled == false -> {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                "助手未启用（服务端未配置 AI）。其它行情功能仍可用。",
+                                modifier = Modifier.padding(12.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                    ui.status == null && !ui.error.isNullOrBlank() -> {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                ui.error ?: "",
+                                modifier = Modifier.padding(12.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                 }
-                ui.error?.let { err ->
-                    Text(
-                        err,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                    )
+                // 已有状态时的业务错误（发送失败等）仍用红字；连接失败已在上方横幅
+                if (ui.status != null) {
+                    ui.error?.let { err ->
+                        Text(
+                            err,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                    }
                 }
 
                 Box(modifier = Modifier.weight(1f)) {
@@ -330,13 +358,20 @@ private fun MessageBubble(
     onSuggestion: (String) -> Unit,
 ) {
     val isUser = msg.role == "user"
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.Top,
     ) {
+        if (!isUser) {
+            ChatAvatar(isUser = false)
+            Spacer(Modifier.size(8.dp))
+        }
         Column(
             modifier = Modifier
-                .widthIn(max = 320.dp)
+                .widthIn(max = 300.dp)
                 .background(
                     color = if (isUser) {
                         MaterialTheme.colorScheme.primaryContainer
@@ -346,6 +381,7 @@ private fun MessageBubble(
                     shape = RoundedCornerShape(12.dp),
                 )
                 .padding(12.dp),
+            horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
         ) {
             if (!isUser && msg.steps.isNotEmpty()) {
                 Text(
@@ -373,7 +409,23 @@ private fun MessageBubble(
                 }
             }
             if (msg.content.isNotBlank()) {
-                Text(msg.content, style = MaterialTheme.typography.bodyMedium)
+                // 长按可选中文字，系统菜单复制；点「复制」一键整段
+                SelectionContainer {
+                    Text(msg.content, style = MaterialTheme.typography.bodyMedium)
+                }
+                if (!msg.streaming) {
+                    Text(
+                        "复制",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .padding(top = 6.dp)
+                            .clickable {
+                                clipboard.setText(AnnotatedString(msg.content))
+                                Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+                            },
+                    )
+                }
             } else if (msg.streaming) {
                 Text("…", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -389,6 +441,43 @@ private fun MessageBubble(
                     }
                 }
             }
+        }
+        if (isUser) {
+            Spacer(Modifier.size(8.dp))
+            ChatAvatar(isUser = true)
+        }
+    }
+}
+
+@Composable
+private fun ChatAvatar(isUser: Boolean) {
+    if (isUser) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Default.Person,
+                contentDescription = "我",
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+    } else {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                AssistantMark,
+                contentDescription = "助手",
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
         }
     }
 }

@@ -293,14 +293,27 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     private suspend fun refreshStatus() {
         try {
             val st = ApiClient.create(prefs.configFlow.first()).aiStatus()
-            _ui.update { it.copy(status = st) }
+            _ui.update { it.copy(status = st, error = null) }
         } catch (e: Exception) {
+            // 连不上服务器 ≠ AI 未配置；保留 status=null，避免误显示「未启用」横幅
             _ui.update {
                 it.copy(
-                    status = AiStatus(aiEnabled = false),
-                    error = e.message,
+                    status = null,
+                    error = friendlyConnectError(e),
                 )
             }
+        }
+    }
+
+    private fun friendlyConnectError(e: Exception): String {
+        val raw = e.message.orEmpty()
+        return when {
+            raw.contains("Failed to connect", ignoreCase = true) ||
+                raw.contains("Unable to resolve host", ignoreCase = true) ||
+                raw.contains("timeout", ignoreCase = true) ||
+                raw.contains("timed out", ignoreCase = true) ->
+                "无法连接服务器，请检查网络或设置里的服务地址后重试"
+            else -> raw.ifBlank { "状态检查失败" }
         }
     }
 
