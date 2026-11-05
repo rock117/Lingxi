@@ -1,7 +1,7 @@
 # Lingxi 智能助手（全能金融对话）设计
 
 > **本文档为设计规范（Source of Truth）。** 先改本文再改代码；落地后同步状态行。  
-> 状态：**P1 已落地（后端 API + App 对话页）；流式步骤 / 会话 / 工具白名单可用。**  
+> 状态：**P1 已落地；另已加 `web_search`（模型自搜）+ `web_fetch`（任意公网 URL，禁私网）。**  
 > 关联：`docs/ai.md`、`docs/api_auth.md`、`docs/screen.md`、`docs/fund_stats.md`、`docs/market_sentiment.md`、`docs/mid_term_trend.md`、`docs/intraday_alert.md`。
 
 ---
@@ -42,7 +42,7 @@
 
 ### P2 — 补全能感
 
-- 公告 / 新闻摘要（新工具 + 数据源）  
+- ~~公告 / 新闻摘要（新工具 + 数据源）~~ → 已提供 **`web_fetch` 任意公网 URL**（无站点白名单；禁私网/本机 + 超时/体积/限流）；专用公告 Client 仍可后补  
 - 同行对比、估值分位（需库内或外部补数）  
 - 自选 / 持仓上下文  
 - **跨会话长期记忆**（用户偏好 / 常问标的，见 §5.2）  
@@ -88,7 +88,7 @@ Tool 白名单（进程内）
 | **A. 进程内 service** | Tool → 直接调 `calculator` / `mid_term` / `fund_stats` / `screen` / `sector` / `intraday_push::compute_now` / `data_source` 等 | 情绪、结构、财报面、选股、板块、超跌 | ✅ 主路径 |
 | **B. 已有外部 Client** | Tool → 现有 client（与 analyze / 盘中行情同一路径） | 实时报价叠加、成交明细（按需） | ✅ 按需 |
 | **C. DB 只读查询** | Tool → SeaORM / 已有 loader（如通知列表、会话） | 最近通知、会话历史 | ✅ |
-| **D. 新外部数据** | 新增 Client + Tool（公告、新闻、热榜等） | 「为什么跌」、资讯摘要 | ❌ P2 |
+| **D. 新外部数据** | `web_fetch`：任意公网 URL（SSRF 防护）；亦可再加专用公告 Client | 打开链接、资讯/公告原文摘要 | ✅ `web_fetch` |
 | **E. 模型内生知识** | 无 tool | 仅概念解释（如「什么是经营现金流」） | ⚠️ 允许，但禁止当日报价/财报数字 |
 
 **禁止：**
@@ -112,8 +112,12 @@ Tool 白名单（进程内）
 | `draft_screen` | A：`AiClient::draft_screen`（另一次受限补全）或同轮工具 | 用户自然语言 |
 | `sector_movers` / `sector_detail` | A/B：`sector::*`（内部可走 Miana） | 同现有 API |
 | `notification_recent` | C：notification 表 | `unread_only`、`limit`≤20 |
+| `web_search` | D：`WebSearchClient` | `query`、`limit`≤8；**模型自拟关键词**，用户不必贴链接；提供方 `serper` / `bocha` / `duckduckgo`（auto） |
+| `web_fetch` | D：`WebFetchClient` 抓公网 http(s) | `url`；**无站点白名单**；禁 localhost/私网；跟跳重验；超时/体积/限流；`untrusted=true` |
 
-单轮工具往返 ≤ **3**；单次 tool 回填截断约 **4000** 字符。
+单轮工具往返默认 ≤ **5**（`AI_MAX_TOOL_ROUNDS`）；单次 tool 回填截断约 **4000** 字符。
+
+外网：`WEB_SEARCH_*`、`WEB_FETCH_*`（见 `.env.example`）。典型链路：`web_search` →（可选）`web_fetch` → 同源 tool 核对数字。行情/财务仍禁止采信网页数字。
 
 ### 3.4 和「对外 HTTP」的关系
 
@@ -295,7 +299,7 @@ data: {"session_id":12,"model":"…","steps":[…],"degraded":false}
 3. 全市场赚钱面和去年比如何？  
 4. 有哪些超跌放量的股票？  
 
-输入框**上方**固定一排场景快捷（对标妙想顶栏分类，点一下填入或展开预设问句）：**情绪 / 个股 / 财报 / 超跌 / 选股**。有会话消息时仍保留，降低「不会问」成本。
+输入框**上方**固定一排场景快捷（对标妙想顶栏分类，点一下填入或展开预设问句）：**情绪 / 个股 / 财报 / 超跌 / 资讯 / 选股**。有会话消息时仍保留，降低「不会问」成本。资讯类问题由模型自行 `web_search`，用户不必贴链接。
 
 ### 6.4 消息气泡
 

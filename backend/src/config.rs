@@ -70,10 +70,11 @@ impl Default for AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(30),
+            // 搜索→打开网页→核对行情 常需多轮
             ai_max_tool_rounds: env::var("AI_MAX_TOOL_ROUNDS")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(3),
+                .unwrap_or(5),
             ai_history_limit: env::var("AI_HISTORY_LIMIT")
                 .ok()
                 .and_then(|v| v.parse().ok())

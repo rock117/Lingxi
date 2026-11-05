@@ -21,6 +21,7 @@ pub const DEFAULT_SUGGESTIONS: &[&str] = &[
     "帮我看看贵州茅台近期表现",
     "全市场赚钱面和去年比如何？",
     "有哪些超跌放量的股票？",
+    "最近有哪些影响 A 股的重要新闻？",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +109,9 @@ pub struct AiStatus {
     pub model: String,
     pub max_tool_rounds: u32,
     pub history_limit: u32,
+    pub web_search_enabled: bool,
+    pub web_search_provider: String,
+    pub web_fetch_enabled: bool,
 }
 
 async fn emit(tx: &mpsc::Sender<AssistantStreamEvent>, ev: AssistantStreamEvent) {

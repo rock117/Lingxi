@@ -86,6 +86,21 @@ async fn rocket() -> _ {
         market::eastmoney::EastmoneyClient::new().expect("初始化东财客户端失败");
     let tencent =
         market::tencent::TencentClient::new().expect("初始化腾讯财经客户端失败");
+    let web_fetch = ai::WebFetchClient::from_env().expect("初始化 WebFetch 客户端失败");
+    if web_fetch.enabled() {
+        tracing::info!("web_fetch 已启用（任意公网 URL，禁私网/本机）");
+    } else {
+        tracing::info!("WEB_FETCH_ENABLED=false：助手 web_fetch 工具关闭");
+    }
+    let web_search = ai::WebSearchClient::from_env().expect("初始化 WebSearch 客户端失败");
+    if web_search.enabled() {
+        tracing::info!(
+            provider = web_search.provider_name(),
+            "web_search 已启用（模型自拟关键词，无需用户贴链接）"
+        );
+    } else {
+        tracing::info!("WEB_SEARCH_ENABLED=false：助手 web_search 工具关闭");
+    }
     let realtime_cache =
         market::realtime_cache::RealtimeDayCache::new(cfg.miana_realtime_cache_secs);
 
@@ -139,6 +154,8 @@ async fn rocket() -> _ {
         .manage(miana)
         .manage(eastmoney)
         .manage(tencent)
+        .manage(web_fetch)
+        .manage(web_search)
         .manage(realtime_cache)
         .manage(hub)
         .attach(request_id::RequestIdFairing)

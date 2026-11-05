@@ -8,8 +8,11 @@ import kotlinx.serialization.json.JsonElement
 data class AiStatus(
     @SerialName("ai_enabled") val aiEnabled: Boolean = false,
     val model: String = "",
-    @SerialName("max_tool_rounds") val maxToolRounds: Int = 3,
+    @SerialName("max_tool_rounds") val maxToolRounds: Int = 5,
     @SerialName("history_limit") val historyLimit: Int = 12,
+    @SerialName("web_search_enabled") val webSearchEnabled: Boolean = false,
+    @SerialName("web_search_provider") val webSearchProvider: String = "",
+    @SerialName("web_fetch_enabled") val webFetchEnabled: Boolean = false,
 )
 
 @Serializable

@@ -4,6 +4,11 @@ pub(crate) mod chat;
 pub(crate) mod client;
 pub mod prompts;
 pub(crate) mod tools;
+pub(crate) mod web_fetch;
+pub(crate) mod web_search;
+
+pub use web_fetch::WebFetchClient;
+pub use web_search::WebSearchClient;
 
 #[allow(unused_imports)]
 pub use chat::{

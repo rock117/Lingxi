@@ -5,6 +5,8 @@ use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOr
 use serde_json::{json, Value};
 
 use super::client::{AiClient, ToolFnSpec, ToolSpec};
+use super::web_fetch::WebFetchClient;
+use super::web_search::WebSearchClient;
 use crate::market::calculator;
 use crate::market::data_source;
 use crate::market::domain::MarketDataInput;
@@ -32,6 +34,8 @@ pub struct ToolContext<'a> {
     pub eastmoney: &'a EastmoneyClient,
     pub tencent: &'a TencentClient,
     pub ai: &'a AiClient,
+    pub web_fetch: &'a WebFetchClient,
+    pub web_search: &'a WebSearchClient,
 }
 
 pub fn tool_specs() -> Vec<ToolSpec> {
@@ -165,6 +169,32 @@ pub fn tool_specs() -> Vec<ToolSpec> {
                 }
             }),
         ),
+        tool(
+            "web_search",
+            "按关键词搜索公网网页（模型自行决定搜什么；用户不必贴链接）。返回标题/摘要/URL；需要原文再 web_fetch",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "搜索关键词，可含股票名/事件" },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 8, "description": "条数，默认 5" }
+                },
+                "required": ["query"]
+            }),
+        ),
+        tool(
+            "web_fetch",
+            "抓取任意公网 http(s) 网页并返回标题与纯文本摘要（禁私网/本机；内容不可信；股价财务勿用此结果）",
+            json!({
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "完整 http/https URL"
+                    }
+                },
+                "required": ["url"]
+            }),
+        ),
     ]
 }
 
@@ -193,6 +223,8 @@ pub fn tool_label(name: &str) -> &'static str {
         "sector_movers" => "板块强弱",
         "sector_detail" => "板块详情",
         "notification_recent" => "最近通知",
+        "web_search" => "网页搜索",
+        "web_fetch" => "打开网页",
         _ => "数据查询",
     }
 }
@@ -211,6 +243,8 @@ pub async fn run_tool(ctx: &ToolContext<'_>, name: &str, args: &Value) -> Result
         "sector_movers" => sector_movers(ctx, args).await?,
         "sector_detail" => sector_detail(ctx, args).await?,
         "notification_recent" => notification_recent(ctx, args).await?,
+        "web_search" => web_search(ctx, args).await?,
+        "web_fetch" => web_fetch(ctx, args).await?,
         _ => return Err(anyhow!("未知工具: {name}")),
     };
     let summary = summarize_tool(name, &value);
@@ -552,6 +586,29 @@ fn summarize_tool(name: &str, v: &Value) -> String {
         "sector_detail" => "已获取板块详情".into(),
         "notification_recent" => "已获取通知".into(),
         "draft_screen" => "已生成选股草稿".into(),
+        "web_search" => {
+            let n = v.get("count").and_then(|x| x.as_u64()).unwrap_or(0);
+            format!("搜到 {n} 条网页")
+        }
+        "web_fetch" => {
+            let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("");
+            if title.is_empty() {
+                "已抓取网页".into()
+            } else {
+                format!("已打开「{title}」")
+            }
+        }
         _ => session::shanghai_today(),
     }
+}
+
+async fn web_search(ctx: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let query = arg_str(args, "query").ok_or_else(|| anyhow!("缺少 query"))?;
+    let limit = arg_i64(args, "limit").unwrap_or(5).clamp(1, 8) as usize;
+    ctx.web_search.search(&query, limit).await
+}
+
+async fn web_fetch(ctx: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let url = arg_str(args, "url").ok_or_else(|| anyhow!("缺少 url"))?;
+    ctx.web_fetch.fetch(&url).await
 }

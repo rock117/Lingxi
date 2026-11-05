@@ -69,6 +69,7 @@ private val ExampleQuestions = listOf(
     "帮我看看贵州茅台近期表现",
     "全市场赚钱面和去年比如何？",
     "有哪些超跌放量的股票？",
+    "最近有哪些影响 A 股的重要新闻？",
 )
 
 private data class SceneChip(val label: String, val prompt: String)
@@ -78,6 +79,7 @@ private val SceneShortcuts = listOf(
     SceneChip("个股", "帮我看看贵州茅台近期表现"),
     SceneChip("财报", "全市场赚钱面和去年比如何？"),
     SceneChip("超跌", "有哪些超跌放量的股票？"),
+    SceneChip("资讯", "最近有哪些影响 A 股的重要新闻？"),
     SceneChip("选股", "帮我筛选近5日放量且均线多头的股票"),
 )
 
@@ -280,7 +282,7 @@ private fun EmptyState(symbolPrefill: String?, onPick: (String) -> Unit) {
         Text("Lingxi 金融助手", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
         Text(
-            "可问大盘情绪、个股、财报面、超跌与选股",
+            "可问大盘情绪、个股、财报面、超跌、资讯与选股",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

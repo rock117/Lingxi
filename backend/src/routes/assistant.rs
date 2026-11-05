@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use crate::ai::chat::AssistantStreamEvent;
 use crate::ai::{
     delete_session, get_session, list_sessions, run_chat, AiClient, AiStatus, ChatRequest,
-    ChatResponse, SessionDetail, SessionOut, ToolContext,
+    ChatResponse, SessionDetail, SessionOut, ToolContext, WebFetchClient, WebSearchClient,
 };
 use crate::config::AppConfig;
 use crate::error::{AppError, AppResult};
@@ -19,12 +19,20 @@ use crate::market::realtime_cache::RealtimeDayCache;
 use crate::market::tencent::TencentClient;
 
 #[get("/api/ai/status")]
-pub async fn ai_status(cfg: &State<AppConfig>, ai: &State<AiClient>) -> Json<AiStatus> {
+pub async fn ai_status(
+    cfg: &State<AppConfig>,
+    ai: &State<AiClient>,
+    web_search: &State<WebSearchClient>,
+    web_fetch: &State<WebFetchClient>,
+) -> Json<AiStatus> {
     Json(AiStatus {
         ai_enabled: ai.enabled(),
         model: ai.model_name().to_string(),
         max_tool_rounds: cfg.ai_max_tool_rounds,
         history_limit: cfg.ai_history_limit,
+        web_search_enabled: web_search.enabled(),
+        web_search_provider: web_search.provider_name().to_string(),
+        web_fetch_enabled: web_fetch.enabled(),
     })
 }
 
@@ -73,6 +81,8 @@ pub async fn chat(
     cache: &State<RealtimeDayCache>,
     eastmoney: &State<EastmoneyClient>,
     tencent: &State<TencentClient>,
+    web_fetch: &State<WebFetchClient>,
+    web_search: &State<WebSearchClient>,
     input: Json<ChatRequest>,
 ) -> AppResult<Json<ChatResponse>> {
     if !ai.enabled() {
@@ -85,6 +95,8 @@ pub async fn chat(
         eastmoney: eastmoney.inner(),
         tencent: tencent.inner(),
         ai: ai.inner(),
+        web_fetch: web_fetch.inner(),
+        web_search: web_search.inner(),
     };
     let resp = run_chat(
         db.inner(),
@@ -109,6 +121,8 @@ pub fn chat_stream(
     cache: &State<RealtimeDayCache>,
     eastmoney: &State<EastmoneyClient>,
     tencent: &State<TencentClient>,
+    web_fetch: &State<WebFetchClient>,
+    web_search: &State<WebSearchClient>,
     input: Json<ChatRequest>,
 ) -> EventStream![] {
     let db = db.inner().clone();
@@ -117,6 +131,8 @@ pub fn chat_stream(
     let cache = cache.inner().clone();
     let eastmoney = eastmoney.inner().clone();
     let tencent = tencent.inner().clone();
+    let web_fetch = web_fetch.inner().clone();
+    let web_search = web_search.inner().clone();
     let max_rounds = cfg.ai_max_tool_rounds;
     let history_limit = cfg.ai_history_limit;
     let req = input.into_inner();
@@ -140,6 +156,8 @@ pub fn chat_stream(
                 eastmoney: &eastmoney,
                 tencent: &tencent,
                 ai: &ai,
+                web_fetch: &web_fetch,
+                web_search: &web_search,
             };
             if let Err(e) = run_chat(
                 &db,
