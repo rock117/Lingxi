@@ -234,8 +234,19 @@ pub async fn compute(
     }
     let mut syms: BTreeMap<String, SymTrack> = BTreeMap::new();
 
+    // Forward-fill last known close so early share days without kline still get mkt.
+    let mut last_close: BTreeMap<String, f64> = BTreeMap::new();
     for r in &rows {
-        let mkt = r.close.map(|c| r.share_units * c);
+        if let Some(c) = r.close {
+            if c.is_finite() && c > 0.0 {
+                last_close.insert(r.symbol.clone(), c);
+            }
+        }
+        let close = r
+            .close
+            .filter(|c| c.is_finite() && *c > 0.0)
+            .or_else(|| last_close.get(&r.symbol).copied());
+        let mkt = close.map(|c| r.share_units * c);
         let gmap = daily.entry(r.trade_date).or_default();
         let e = gmap.entry(r.index_group.clone()).or_insert((0.0, 0.0));
         e.0 += r.share_units;
@@ -275,12 +286,15 @@ pub async fn compute(
 
     let mut groups_out = Vec::with_capacity(GROUPS.len());
     for (gid, label) in GROUPS {
+        // Only emit days this group actually has share data (no zero-fill).
         let mut series = Vec::with_capacity(series_dates.len());
         for d in &series_dates {
-            let (share, mkt) = daily
-                .get(d)
-                .and_then(|m| m.get(*gid).copied())
-                .unwrap_or((0.0, 0.0));
+            let Some((share, mkt)) = daily.get(d).and_then(|m| m.get(*gid).copied()) else {
+                continue;
+            };
+            if share <= 0.0 {
+                continue;
+            }
             series.push(EtfSharePoint {
                 date: d.format("%Y-%m-%d").to_string(),
                 share,
@@ -292,15 +306,16 @@ pub async fn compute(
             .last()
             .map(|p| (p.share, p.mkt))
             .unwrap_or((0.0, 0.0));
-        let first = series.first();
-        let delta_share = first.map(|p| latest_share - p.share);
-        let delta_share_pct = first.and_then(|p| pct_delta(p.share, latest_share));
+        let first_share_pt = series.iter().find(|p| p.share > 0.0);
+        let first_mkt_pt = series.iter().find(|p| p.mkt > 0.0);
+        let delta_share = first_share_pt.map(|p| latest_share - p.share);
+        let delta_share_pct = first_share_pt.and_then(|p| pct_delta(p.share, latest_share));
         let latest_mkt = if latest_mkt_raw > 0.0 {
             Some(latest_mkt_raw)
         } else {
             None
         };
-        let first_mkt = first.and_then(|p| if p.mkt > 0.0 { Some(p.mkt) } else { None });
+        let first_mkt = first_mkt_pt.map(|p| p.mkt);
         let delta_mkt = abs_delta(first_mkt, latest_mkt);
         let delta_mkt_pct = match (first_mkt, latest_mkt) {
             (Some(a), Some(b)) => pct_delta(a, b),
@@ -363,7 +378,7 @@ pub async fn compute(
         range: range_id.into(),
         granularity: gran.as_str().into(),
         start_date: start.format("%Y-%m-%d").to_string(),
-        note: "市值=份额×收盘估算；缺K线标的不计入当日市值。份额数据多为交易所T+1披露。".into(),
+        note: "市值=份额×收盘估算（缺当日K线时沿用最近收盘）；份额为交易所场内份额，多为T+1披露。".into(),
         groups: groups_out,
     })
 }

@@ -119,7 +119,26 @@ if ($LASTEXITCODE -ne 0) {
 if ($Launch) {
     Write-Host ""
     Write-Host "--- launch app ---"
-    & $adb -s $chosen shell am start -n "com.lingxi.app/.MainActivity"
+    # Use arg array so PowerShell never drops `shell` (otherwise adb sees bare `am`
+    # and prints: adb.exe: unknown command am).
+    $launchArgs = @(
+        "-s", $chosen,
+        "shell", "am", "start",
+        "-a", "android.intent.action.MAIN",
+        "-n", "com.lingxi.app/.MainActivity"
+    )
+    Write-Host ("adb " + ($launchArgs -join " "))
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $adb @launchArgs
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "am start failed (exit $LASTEXITCODE); trying monkey launcher..."
+            & $adb -s $chosen shell monkey -p com.lingxi.app -c android.intent.category.LAUNCHER 1
+        }
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
 }
 
 if ($Logcat) {

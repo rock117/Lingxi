@@ -282,56 +282,157 @@ private fun EtfShareChart(
     modifier: Modifier = Modifier,
 ) {
     val grid = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        if (w <= 0f || h <= 0f) return@Canvas
-        val padL = 8.dp.toPx()
-        val padR = 8.dp.toPx()
-        val padT = 8.dp.toPx()
-        val padB = 8.dp.toPx()
-        val plotW = w - padL - padR
-        val plotH = h - padT - padB
+    val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
 
-        var minV = Double.POSITIVE_INFINITY
-        var maxV = Double.NEGATIVE_INFINITY
-        groups.forEach { g ->
-            g.series.forEach { p ->
+    data class Pt(val date: String, val value: Double)
+
+    val aligned = remember(groups, metric) {
+        val byGroup = groups.map { g ->
+            g.id to g.series.mapNotNull { p ->
                 val v = if (metric == EtfShareMetric.Share) p.share else p.mkt
-                if (v.isFinite()) {
-                    minV = minOf(minV, v)
-                    maxV = maxOf(maxV, v)
+                if (v.isFinite() && v > 0.0) Pt(p.date, v) else null
+            }
+        }
+        val dates = byGroup
+            .flatMap { it.second.map { p -> p.date } }
+            .distinct()
+            .sorted()
+        // Drop leading/trailing dates where every group is missing / zero.
+        fun anyPositive(d: String) = byGroup.any { (_, pts) -> pts.any { it.date == d } }
+        val first = dates.indexOfFirst { anyPositive(it) }
+        val last = dates.indexOfLast { anyPositive(it) }
+        val trimmed = if (first >= 0 && last >= first) dates.subList(first, last + 1) else emptyList()
+        val maps = byGroup.map { (id, pts) -> id to pts.associateBy { it.date } }
+        Triple(trimmed, maps, byGroup)
+    }
+    val dates = aligned.first
+    val maps = aligned.second
+
+    var minV = Double.POSITIVE_INFINITY
+    var maxV = Double.NEGATIVE_INFINITY
+    maps.forEach { (_, m) ->
+        dates.forEach { d ->
+            m[d]?.value?.let { v ->
+                minV = minOf(minV, v)
+                maxV = maxOf(maxV, v)
+            }
+        }
+    }
+    if (!minV.isFinite() || !maxV.isFinite()) {
+        minV = 0.0
+        maxV = 1.0
+    }
+    // Pad a little so lines don't hug the top edge.
+    if (maxV > minV) {
+        val pad = (maxV - minV) * 0.05
+        minV = (minV - pad).coerceAtLeast(0.0)
+        maxV += pad
+    } else {
+        maxV = minV * 1.05 + 1.0
+        minV = (minV * 0.95).coerceAtLeast(0.0)
+    }
+    val yTicks = listOf(maxV, (maxV + minV) / 2.0, minV)
+    val xLabels = when {
+        dates.isEmpty() -> emptyList()
+        dates.size == 1 -> listOf(dates.first())
+        dates.size == 2 -> listOf(dates.first(), dates.last())
+        else -> listOf(dates.first(), dates[dates.size / 2], dates.last())
+    }
+
+    Row(modifier = modifier) {
+        Column(
+            modifier = Modifier
+                .height(200.dp)
+                .padding(end = 4.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+            horizontalAlignment = Alignment.End,
+        ) {
+            yTicks.forEach { v ->
+                Text(
+                    formatYiShort(v),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = labelColor,
+                    maxLines = 1,
+                )
+            }
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            if (dates.size < 2) {
+                Text(
+                    "区间内有效点不足，请换日粒度或扩大区间",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = labelColor,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(200.dp)
+                        .padding(16.dp),
+                )
+            } else {
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(200.dp),
+                ) {
+                    val w = size.width
+                    val h = size.height
+                    if (w <= 0f || h <= 0f) return@Canvas
+                    val padL = 4.dp.toPx()
+                    val padR = 4.dp.toPx()
+                    val padT = 4.dp.toPx()
+                    val padB = 4.dp.toPx()
+                    val plotW = w - padL - padR
+                    val plotH = h - padT - padB
+                    val span = (maxV - minV).coerceAtLeast(1e-9)
+                    val dateIndex = dates.withIndex().associate { it.value to it.index }
+
+                    for (i in 0..2) {
+                        val y = padT + plotH * i / 2f
+                        drawLine(grid, Offset(padL, y), Offset(padL + plotW, y), strokeWidth = 1f)
+                    }
+
+                    groups.forEachIndexed { idx, g ->
+                        val map = maps.getOrNull(idx)?.second.orEmpty()
+                        val dim = highlightId != null && highlightId != g.id
+                        val color = GroupColors[idx % GroupColors.size].copy(alpha = if (dim) 0.25f else 1f)
+                        val path = Path()
+                        var started = false
+                        dates.forEach { d ->
+                            val pt = map[d] ?: return@forEach
+                            val i = dateIndex[d] ?: return@forEach
+                            val x = padL + plotW * i / (dates.size - 1).coerceAtLeast(1)
+                            val y = padT + plotH * (1f - ((pt.value - minV) / span).toFloat().coerceIn(0f, 1f))
+                            if (!started) {
+                                path.moveTo(x, y)
+                                started = true
+                            } else {
+                                path.lineTo(x, y)
+                            }
+                        }
+                        if (started) {
+                            drawPath(
+                                path,
+                                color = color,
+                                style = Stroke(width = if (highlightId == g.id) 4f else 2.5f),
+                            )
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    xLabels.forEach { d ->
+                        Text(
+                            formatAxisDate(d),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = labelColor,
+                            maxLines = 1,
+                        )
+                    }
                 }
             }
-        }
-        if (!minV.isFinite() || !maxV.isFinite() || maxV <= minV) {
-            minV = 0.0
-            maxV = 1.0
-        }
-        val span = (maxV - minV).coerceAtLeast(1e-9)
-
-        // grid
-        for (i in 0..3) {
-            val y = padT + plotH * i / 3f
-            drawLine(grid, Offset(padL, y), Offset(padL + plotW, y), strokeWidth = 1f)
-        }
-
-        val maxLen = groups.maxOfOrNull { it.series.size } ?: 0
-        if (maxLen < 2) return@Canvas
-
-        groups.forEachIndexed { idx, g ->
-            val series = g.series
-            if (series.size < 2) return@forEachIndexed
-            val dim = highlightId != null && highlightId != g.id
-            val color = GroupColors[idx % GroupColors.size].copy(alpha = if (dim) 0.25f else 1f)
-            val path = Path()
-            series.forEachIndexed { i, p ->
-                val v = if (metric == EtfShareMetric.Share) p.share else p.mkt
-                val x = padL + plotW * i / (series.size - 1).coerceAtLeast(1)
-                val y = padT + plotH * (1f - ((v - minV) / span).toFloat().coerceIn(0f, 1f))
-                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-            }
-            drawPath(path, color = color, style = Stroke(width = if (highlightId == g.id) 4f else 2.5f))
         }
     }
 }
@@ -436,6 +537,28 @@ private fun formatYi(v: Double?): String {
     if (v == null || !v.isFinite()) return "—"
     val yi = v / 1e8
     return String.format(Locale.US, "%,.2f亿", yi)
+}
+
+/** Compact Y-axis label (亿). */
+private fun formatYiShort(v: Double): String {
+    if (!v.isFinite()) return "—"
+    val yi = v / 1e8
+    return when {
+        yi >= 1000 -> String.format(Locale.US, "%.0f亿", yi)
+        yi >= 100 -> String.format(Locale.US, "%.0f亿", yi)
+        yi >= 10 -> String.format(Locale.US, "%.1f亿", yi)
+        else -> String.format(Locale.US, "%.2f亿", yi)
+    }
+}
+
+private fun formatAxisDate(iso: String): String {
+    // 2024-11-20 -> 24-11 or 11-20
+    val parts = iso.split("-")
+    return if (parts.size >= 3) {
+        "${parts[1]}-${parts[2]}"
+    } else {
+        iso
+    }
 }
 
 private fun formatYiSigned(v: Double?): String {
