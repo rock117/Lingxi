@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Assessment
+import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -34,6 +35,7 @@ import com.lingxi.app.viewmodel.MarketViewModel
 private enum class MoreDest {
     Menu,
     FundStats,
+    EtfShare,
 }
 
 @Composable
@@ -46,11 +48,16 @@ fun MoreTab(
     when (dest) {
         MoreDest.Menu -> MoreMenuScreen(
             onFundStats = { dest = MoreDest.FundStats },
+            onEtfShare = { dest = MoreDest.EtfShare },
             onAssistant = onOpenAssistant,
         )
         MoreDest.FundStats -> Column(modifier = Modifier.fillMaxSize()) {
             MoreSubHeader(title = "A股财报统计", onBack = { dest = MoreDest.Menu })
             FundStatsScreen(viewModel = marketViewModel)
+        }
+        MoreDest.EtfShare -> Column(modifier = Modifier.fillMaxSize()) {
+            MoreSubHeader(title = "宽基ETF份额", onBack = { dest = MoreDest.Menu })
+            EtfShareScreen(viewModel = marketViewModel)
         }
     }
 }
@@ -73,6 +80,7 @@ private fun MoreSubHeader(title: String, onBack: () -> Unit) {
 @Composable
 private fun MoreMenuScreen(
     onFundStats: () -> Unit,
+    onEtfShare: () -> Unit,
     onAssistant: () -> Unit,
 ) {
     Column(
@@ -116,6 +124,20 @@ private fun MoreMenuScreen(
             title = "财报统计",
             subtitle = "全市场赚钱占比 · 增长 · 现金流",
             onClick = onFundStats,
+        )
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        MoreMenuRow(
+            icon = {
+                Icon(
+                    Icons.Default.ShowChart,
+                    contentDescription = null,
+                    modifier = Modifier.size(28.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            title = "宽基ETF份额",
+            subtitle = "沪深300 / 上证50 / 科创50 / 创业板 · 份额与市值",
+            onClick = onEtfShare,
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     }

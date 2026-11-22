@@ -7,6 +7,7 @@ import com.lingxi.app.data.model.AssistantSession
 import com.lingxi.app.data.model.AssistantSessionDetail
 import com.lingxi.app.data.model.Condition
 import com.lingxi.app.data.model.CreateConditionRequest
+import com.lingxi.app.data.model.EtfShareGroupsResult
 import com.lingxi.app.data.model.FundStatsMeta
 import com.lingxi.app.data.model.FundStatsResult
 import com.lingxi.app.data.model.HealthResponse
@@ -119,6 +120,12 @@ interface LingxiApi {
         @Query("year") year: Int? = null,
         @Query("period") period: String? = null,
     ): FundStatsResult
+
+    @GET("api/market/etf-share-groups")
+    suspend fun etfShareGroups(
+        @Query("granularity") granularity: String? = null,
+        @Query("range") range: String? = null,
+    ): EtfShareGroupsResult
 
     @GET("api/notifications")
     suspend fun listNotifications(

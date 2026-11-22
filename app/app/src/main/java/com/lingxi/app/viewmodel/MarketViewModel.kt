@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.lingxi.app.data.api.ApiClient
+import com.lingxi.app.data.model.EtfShareGroupsResult
 import com.lingxi.app.data.model.FundStatsMeta
 import com.lingxi.app.data.model.FundStatsResult
 import com.lingxi.app.data.model.MsiResult
@@ -50,6 +51,20 @@ data class FundStatsUiState(
     val error: String? = null,
 )
 
+enum class EtfShareMetric { Share, Mkt }
+
+enum class EtfShareViewMode { Chart, Table }
+
+data class EtfShareUiState(
+    val loading: Boolean = false,
+    val result: EtfShareGroupsResult? = null,
+    val granularity: String = "day",
+    val range: String = "3m",
+    val metric: EtfShareMetric = EtfShareMetric.Share,
+    val viewMode: EtfShareViewMode = EtfShareViewMode.Chart,
+    val error: String? = null,
+)
+
 data class SectorMoversUiState(
     val loading: Boolean = false,
     val data: SectorMovers? = null,
@@ -74,6 +89,9 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _fundStats = MutableStateFlow(FundStatsUiState())
     val fundStats: StateFlow<FundStatsUiState> = _fundStats.asStateFlow()
+
+    private val _etfShare = MutableStateFlow(EtfShareUiState())
+    val etfShare: StateFlow<EtfShareUiState> = _etfShare.asStateFlow()
 
     private val _sectorMovers = MutableStateFlow(SectorMoversUiState())
     val sectorMovers: StateFlow<SectorMoversUiState> = _sectorMovers.asStateFlow()
@@ -101,6 +119,62 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
     fun loadFundStatsIfNeeded() {
         if (_fundStats.value.meta != null || _fundStats.value.loading) return
         refreshFundStats()
+    }
+
+    fun loadEtfShareIfNeeded() {
+        if (_etfShare.value.result != null || _etfShare.value.loading) return
+        refreshEtfShare()
+    }
+
+    fun setEtfShareGranularity(granularity: String) {
+        if (granularity == _etfShare.value.granularity) return
+        _etfShare.value = _etfShare.value.copy(granularity = granularity)
+        refreshEtfShare(keepUi = true)
+    }
+
+    fun setEtfShareRange(range: String) {
+        if (range == _etfShare.value.range) return
+        _etfShare.value = _etfShare.value.copy(range = range)
+        refreshEtfShare(keepUi = true)
+    }
+
+    fun setEtfShareMetric(metric: EtfShareMetric) {
+        if (metric == _etfShare.value.metric) return
+        _etfShare.value = _etfShare.value.copy(metric = metric)
+    }
+
+    fun setEtfShareViewMode(mode: EtfShareViewMode) {
+        if (mode == _etfShare.value.viewMode) return
+        _etfShare.value = _etfShare.value.copy(viewMode = mode)
+    }
+
+    fun refreshEtfShare(keepUi: Boolean = false) {
+        viewModelScope.launch {
+            val cfg = prefs.configFlow.first()
+            val prev = _etfShare.value
+            _etfShare.value = prev.copy(loading = true, error = null)
+            try {
+                val api = ApiClient.create(cfg)
+                val result = api.etfShareGroups(
+                    granularity = prev.granularity,
+                    range = prev.range,
+                )
+                _etfShare.value = prev.copy(
+                    loading = false,
+                    result = result,
+                    granularity = result.granularity.ifBlank { prev.granularity },
+                    range = result.range.ifBlank { prev.range },
+                    error = null,
+                    metric = if (keepUi) prev.metric else prev.metric,
+                    viewMode = if (keepUi) prev.viewMode else prev.viewMode,
+                )
+            } catch (e: Exception) {
+                _etfShare.value = prev.copy(
+                    loading = false,
+                    error = e.message ?: e.javaClass.simpleName,
+                )
+            }
+        }
     }
 
     fun selectFundPeriod(period: String) {

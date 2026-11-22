@@ -14,6 +14,7 @@ pub mod data_source;
 pub mod domain;
 pub mod eastmoney;
 pub mod tencent;
+pub mod etf_share_groups;
 pub mod fund_stats;
 pub mod fundamentals;
 pub mod stock_analyze;

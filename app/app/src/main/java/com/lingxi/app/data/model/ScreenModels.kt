@@ -131,6 +131,31 @@ data class DetailSummary(
 )
 
 @Serializable
+data class SwingLeg(
+    @SerialName("start_date") val startDate: String = "",
+    @SerialName("end_date") val endDate: String = "",
+    @SerialName("start_price") val startPrice: Double = 0.0,
+    @SerialName("end_price") val endPrice: Double = 0.0,
+    @SerialName("change_pct") val changePct: Double = 0.0,
+    @SerialName("trading_days") val tradingDays: Int = 0,
+    @SerialName("amount_sum") val amountSum: Double = 0.0,
+    @SerialName("amount_avg") val amountAvg: Double = 0.0,
+)
+
+@Serializable
+data class SwingCycle(
+    @SerialName("lookback_days") val lookbackDays: Int = 90,
+    @SerialName("window_bars") val windowBars: Int = 0,
+    @SerialName("peak_date") val peakDate: String = "",
+    @SerialName("peak_price") val peakPrice: Double = 0.0,
+    @SerialName("trough_date") val troughDate: String = "",
+    @SerialName("trough_price") val troughPrice: Double = 0.0,
+    val rise: SwingLeg? = null,
+    val fall: SwingLeg? = null,
+    val summary: String = "",
+)
+
+@Serializable
 data class ShortTermDim(
     val bars: List<StockBar> = emptyList(),
     @SerialName("change_5d_pct") val change5dPct: Double? = null,
@@ -156,6 +181,8 @@ data class ShortTermDim(
     @SerialName("rsi_days_os") val rsiDaysOs: Int = 0,
     @SerialName("rsi_crossed_oversold") val rsiCrossedOversold: Boolean = false,
     @SerialName("rsi_crossed_overbought") val rsiCrossedOverbought: Boolean = false,
+    /** 近 N 交易日高低点波段（无图） */
+    val swing: SwingCycle? = null,
     val labels: List<String> = emptyList(),
     val ai: DimAi = DimAi(),
 )

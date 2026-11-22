@@ -387,6 +387,28 @@ async fn stock_fundamentals(ctx: &ToolContext<'_>, args: &Value) -> Result<Value
             "volume_label": out.short_term.volume_label,
             "rsi14": out.short_term.rsi14,
             "rsi_zone": out.short_term.rsi_zone,
+            "swing": out.short_term.swing.as_ref().map(|s| json!({
+                "lookback_days": s.lookback_days,
+                "summary": s.summary,
+                "peak_date": s.peak_date,
+                "peak_price": s.peak_price,
+                "trough_date": s.trough_date,
+                "trough_price": s.trough_price,
+                "rise": s.rise.as_ref().map(|r| json!({
+                    "start_date": r.start_date,
+                    "end_date": r.end_date,
+                    "change_pct": r.change_pct,
+                    "trading_days": r.trading_days,
+                    "amount_sum": r.amount_sum,
+                })),
+                "fall": s.fall.as_ref().map(|f| json!({
+                    "start_date": f.start_date,
+                    "end_date": f.end_date,
+                    "change_pct": f.change_pct,
+                    "trading_days": f.trading_days,
+                    "amount_sum": f.amount_sum,
+                })),
+            })),
         },
         "fundamentals": {
             "quality_flags": out.fundamentals.quality_flags,

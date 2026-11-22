@@ -189,6 +189,7 @@ async fn rocket() -> _ {
                 market::routes::sector_detail,
                 market::routes::fund_stats_meta,
                 market::routes::fund_stats_query,
+                market::routes::etf_share_groups_query,
                 routes::assistant::ai_status,
                 routes::assistant::sessions_list,
                 routes::assistant::sessions_get,

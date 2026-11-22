@@ -79,6 +79,8 @@ import com.lingxi.app.data.model.StockAnalyze
 import com.lingxi.app.data.model.StockAnalyzeQuote
 import com.lingxi.app.data.model.StockBar
 import com.lingxi.app.data.model.StockSearchHit
+import com.lingxi.app.data.model.SwingCycle
+import com.lingxi.app.data.model.SwingLeg
 import com.lingxi.app.ui.QuoteColors
 import com.lingxi.app.viewmodel.ScreenViewModel
 import java.util.Locale
@@ -614,6 +616,9 @@ private fun ShortTermTabContent(
     ) {
         if (quote != null) {
             item { DayQuotePanel(quote) }
+        }
+        dim.swing?.let { swing ->
+            item { SwingCycleCard(swing) }
         }
         item {
             Surface(
@@ -1674,6 +1679,126 @@ private fun EmptyHint(modifier: Modifier = Modifier) {
         )
     }
 }
+
+@Composable
+private fun SwingCycleCard(swing: SwingCycle) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp,
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "本轮高低点",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "近${swing.lookbackDays}交易日 · ${swing.windowBars}根",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (swing.summary.isNotBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    swing.summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                SwingLegColumn(
+                    title = "上涨（低→高）",
+                    leg = swing.rise,
+                    modifier = Modifier.weight(1f),
+                )
+                SwingLegColumn(
+                    title = "回撤（高→今）",
+                    leg = swing.fall,
+                    emptyHint = "仍在高点附近\n无明显回撤",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                "峰值按日高；起点为峰值前窗口内日低最低。成交额含起止日。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SwingLegColumn(
+    title: String,
+    leg: SwingLeg?,
+    emptyHint: String = "—",
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        Text(
+            title,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        if (leg == null) {
+            Text(
+                emptyHint,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Text(
+                "${shortMd(leg.startDate)} → ${shortMd(leg.endDate)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "${formatAnalyzePrice(leg.startPrice)} → ${formatAnalyzePrice(leg.endPrice)}",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(
+                formatAnalyzePct(leg.changePct),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = QuoteColors.of(leg.changePct),
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "${leg.tradingDays} 个交易日",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                "额 ${formatAnalyzeAmount(leg.amountSum)}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                "日均 ${formatAnalyzeAmount(leg.amountAvg)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+private fun shortMd(date: String): String =
+    if (date.length >= 10 && date[4] == '-') date.substring(5, 10) else date
 
 private fun formatAnalyzePrice(v: Double): String =
     String.format(Locale.US, "%.2f", v)

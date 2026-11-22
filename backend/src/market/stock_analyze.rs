@@ -127,6 +127,40 @@ pub struct StockAnalyzeQuote {
     pub turnover_rate: Option<f64>,
 }
 
+/// 波段一段路程：上涨（低→高）或下跌（高→今）。
+#[derive(Debug, Clone, Serialize)]
+pub struct SwingLeg {
+    pub start_date: String,
+    pub end_date: String,
+    pub start_price: f64,
+    pub end_price: f64,
+    pub change_pct: f64,
+    /// 含起止的交易日数
+    pub trading_days: u32,
+    /// 区间成交额合计（元）
+    pub amount_sum: f64,
+    /// 区间日均成交额（元）
+    pub amount_avg: f64,
+}
+
+/// 近 N 交易日高低点叙事：峰前低点→窗口最高→今日。
+#[derive(Debug, Clone, Serialize)]
+pub struct SwingCycle {
+    /// 请求回看交易日数（默认 90）
+    pub lookback_days: u32,
+    /// 实际用到的 K 线根数
+    pub window_bars: u32,
+    pub peak_date: String,
+    /// 峰值用日 high
+    pub peak_price: f64,
+    pub trough_date: String,
+    /// 起点用日 low
+    pub trough_price: f64,
+    pub rise: Option<SwingLeg>,
+    pub fall: Option<SwingLeg>,
+    pub summary: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ShortTermDim {
     pub bars: Vec<StockAnalyzeBar>,
@@ -164,6 +198,9 @@ pub struct ShortTermDim {
     pub rsi_crossed_oversold: bool,
     /// 昨→今下破超买线（70）
     pub rsi_crossed_overbought: bool,
+    /// 近 lookback 交易日高低点波段（无图，纯数字）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub swing: Option<SwingCycle>,
     pub labels: Vec<String>,
     pub ai: DimAi,
 }
@@ -752,7 +789,8 @@ pub async fn analyze_stock(
     let used_trade_date = ticks.used_trade_date;
     let detail_status = ticks.status;
 
-    let bars_raw = data_source::load_stock_recent_klines(db, symbol, 60).await?;
+    // 短线波段默认近 90 交易日；多取一点给均线/RSI 余量
+    let bars_raw = data_source::load_stock_recent_klines(db, symbol, SWING_LOOKBACK_DAYS).await?;
     let all_bars: Vec<StockAnalyzeBar> = bars_raw
         .iter()
         .map(|b| StockAnalyzeBar {
@@ -1440,6 +1478,177 @@ fn pct_vs(price: f64, ma: Option<f64>) -> Option<f64> {
     ma.filter(|m| *m > 1e-10).map(|m| (price / m - 1.0) * 100.0)
 }
 
+/// 短线波段回看交易日（默认）。
+pub const SWING_LOOKBACK_DAYS: usize = 90;
+
+fn build_swing_cycle(all_bars: &[StockAnalyzeBar], last_price: Option<f64>) -> Option<SwingCycle> {
+    if all_bars.len() < 2 {
+        return None;
+    }
+    let start = all_bars.len().saturating_sub(SWING_LOOKBACK_DAYS);
+    let window = &all_bars[start..];
+    if window.len() < 2 {
+        return None;
+    }
+    // 峰值：窗口内日 high 最大；并列取更近（更大下标）
+    let mut peak_i = 0usize;
+    for (i, b) in window.iter().enumerate().skip(1) {
+        if b.high >= window[peak_i].high {
+            peak_i = i;
+        }
+    }
+    // 起点：峰值当日及之前，日 low 最低；并列取更早
+    let mut trough_i = 0usize;
+    for (i, b) in window.iter().enumerate().take(peak_i + 1) {
+        if i == 0 || b.low < window[trough_i].low {
+            trough_i = i;
+        }
+    }
+    let last_i = window.len() - 1;
+    let trough = &window[trough_i];
+    let peak = &window[peak_i];
+    let today = &window[last_i];
+    let today_px = last_price.filter(|p| p.is_finite() && *p > 1e-10).unwrap_or(today.close);
+
+    let rise = if trough_i <= peak_i && trough.low > 1e-10 && peak.high > 1e-10 {
+        Some(swing_leg(
+            &trough.date,
+            &peak.date,
+            trough.low,
+            peak.high,
+            trough_i,
+            peak_i,
+            window,
+        ))
+    } else {
+        None
+    };
+    // 回撤段：高点不在末日，或相对峰值已明显回落；否则视为窗口内仍在上涨/贴近高点
+    let fall_raw = if peak_i <= last_i && peak.high > 1e-10 && today_px > 1e-10 {
+        Some(swing_leg(
+            &peak.date,
+            &today.date,
+            peak.high,
+            today_px,
+            peak_i,
+            last_i,
+            window,
+        ))
+    } else {
+        None
+    };
+    const FALL_MIN_PCT: f64 = -1.0; // 相对峰值回撤不足 1% 不算「下跌段」
+    let fall = fall_raw.filter(|f| {
+        // 峰值就在今日：只有影线回撤，不当作独立下跌段
+        if peak_i == last_i {
+            return false;
+        }
+        f.change_pct <= FALL_MIN_PCT
+    });
+    let near_peak = fall.is_none() && rise.is_some();
+
+    let summary = {
+        let mut parts = Vec::new();
+        if let Some(r) = &rise {
+            parts.push(format!(
+                "{}低点{:.2}→{}高点{:.2} 涨{:+.1}%（{}日·额{}）",
+                short_md(&r.start_date),
+                r.start_price,
+                short_md(&r.end_date),
+                r.end_price,
+                r.change_pct,
+                r.trading_days,
+                format_amount_cn(r.amount_sum),
+            ));
+        }
+        if let Some(f) = &fall {
+            parts.push(format!(
+                "高点→今{:.2} 回撤{:+.1}%（{}日·额{}）",
+                f.end_price,
+                f.change_pct,
+                f.trading_days,
+                format_amount_cn(f.amount_sum),
+            ));
+        } else if near_peak {
+            parts.push(format!(
+                "现价{:.2}贴近窗口高点{:.2}，近{}日未见明显回撤",
+                today_px, peak.high, SWING_LOOKBACK_DAYS
+            ));
+        }
+        if parts.is_empty() {
+            "样本不足，无法计算波段".into()
+        } else {
+            parts.join("；")
+        }
+    };
+
+    Some(SwingCycle {
+        lookback_days: SWING_LOOKBACK_DAYS as u32,
+        window_bars: window.len() as u32,
+        peak_date: peak.date.clone(),
+        peak_price: peak.high,
+        trough_date: trough.date.clone(),
+        trough_price: trough.low,
+        rise,
+        fall,
+        summary,
+    })
+}
+
+fn swing_leg(
+    start_date: &str,
+    end_date: &str,
+    start_price: f64,
+    end_price: f64,
+    start_i: usize,
+    end_i: usize,
+    window: &[StockAnalyzeBar],
+) -> SwingLeg {
+    let trading_days = (end_i.saturating_sub(start_i) + 1) as u32;
+    let amount_sum: f64 = window[start_i..=end_i].iter().map(|b| b.amount).sum();
+    let amount_avg = if trading_days > 0 {
+        amount_sum / trading_days as f64
+    } else {
+        0.0
+    };
+    let change_pct = if start_price > 1e-10 {
+        (end_price / start_price - 1.0) * 100.0
+    } else {
+        0.0
+    };
+    SwingLeg {
+        start_date: start_date.to_string(),
+        end_date: end_date.to_string(),
+        start_price,
+        end_price,
+        change_pct,
+        trading_days,
+        amount_sum,
+        amount_avg,
+    }
+}
+
+fn short_md(date: &str) -> String {
+    if date.len() >= 10 && date.as_bytes().get(4) == Some(&b'-') {
+        date[5..10].to_string()
+    } else {
+        date.to_string()
+    }
+}
+
+fn format_amount_cn(v: f64) -> String {
+    if !v.is_finite() || v <= 0.0 {
+        return "—".into();
+    }
+    if v >= 1e8 {
+        format!("{:.1}亿", v / 1e8)
+    } else if v >= 1e4 {
+        format!("{:.0}万", v / 1e4)
+    } else {
+        format!("{v:.0}")
+    }
+}
+
 fn build_short_term(all_bars: &[StockAnalyzeBar], last_price: Option<f64>) -> ShortTermDim {
     let show: Vec<StockAnalyzeBar> = all_bars
         .iter()
@@ -1450,6 +1659,7 @@ fn build_short_term(all_bars: &[StockAnalyzeBar], last_price: Option<f64>) -> Sh
         .into_iter()
         .rev()
         .collect();
+    let swing = build_swing_cycle(all_bars, last_price);
     let last_amt = all_bars.last().map(|b| b.amount);
     let avg5 = if all_bars.len() >= 5 {
         let s: f64 = all_bars[all_bars.len() - 5..]
@@ -1612,6 +1822,7 @@ fn build_short_term(all_bars: &[StockAnalyzeBar], last_price: Option<f64>) -> Sh
         rsi_days_os,
         rsi_crossed_oversold,
         rsi_crossed_overbought,
+        swing,
         labels,
         ai: DimAi::pending(),
     }

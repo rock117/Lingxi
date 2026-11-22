@@ -25,6 +25,7 @@ use super::realtime_cache::RealtimeDayCache;
 use super::result_cache;
 use crate::ai::AiClient;
 use super::eastmoney::EastmoneyClient;
+use super::etf_share_groups::{self as etf_share_groups_svc, EtfShareGroupsResult};
 use super::fund_stats::{self as fund_stats_svc, FundStatsMeta, FundStatsResult};
 use super::sector::{self as sector_svc, SectorDetailOut, SectorMoversOut};
 use super::fundamentals;
@@ -224,6 +225,26 @@ pub async fn fund_stats_query(
         yoy_up = result.summary.yoy_up,
         qoq_up = result.summary.qoq_up,
         "全市场财报统计"
+    );
+    Ok(Json(result))
+}
+
+/// `GET /api/market/etf-share-groups?granularity=day&range=3m` — 宽基四组合计份额/估算市值。
+#[get("/api/market/etf-share-groups?<granularity>&<range>")]
+pub async fn etf_share_groups_query(
+    db: &rocket::State<DatabaseConnection>,
+    granularity: Option<&str>,
+    range: Option<&str>,
+) -> AppResult<Json<EtfShareGroupsResult>> {
+    let result = etf_share_groups_svc::compute(db.inner(), granularity, range)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    tracing::info!(
+        as_of = %result.as_of,
+        range = %result.range,
+        granularity = %result.granularity,
+        groups = result.groups.len(),
+        "宽基ETF份额分组"
     );
     Ok(Json(result))
 }
