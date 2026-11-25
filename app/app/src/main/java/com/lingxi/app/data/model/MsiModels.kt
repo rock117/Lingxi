@@ -3,6 +3,17 @@ package com.lingxi.app.data.model
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
+/** `GET /api/market/sentiment/ai` */
+@Serializable
+data class SentimentAi(
+    @SerialName("trade_date") val tradeDate: String = "",
+    val days: Int = 5,
+    val ai: DimAi = DimAi(),
+    @SerialName("ai_enabled") val aiEnabled: Boolean = false,
+    @SerialName("ai_model") val aiModel: String? = null,
+    val cached: Boolean = false,
+)
+
 @Serializable
 data class MsiResult(
     val today: MsiDayResult,

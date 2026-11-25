@@ -175,6 +175,7 @@ async fn rocket() -> _ {
                 routes::notification::delete_one,
                 routes::notification::delete_all,
                 market::routes::sentiment,
+                market::routes::sentiment_ai,
                 market::routes::mid_term_trend,
                 market::routes::intraday_alerts,
                 market::routes::strategies,

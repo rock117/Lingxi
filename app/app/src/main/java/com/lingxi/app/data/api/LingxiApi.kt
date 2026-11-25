@@ -18,6 +18,7 @@ import com.lingxi.app.data.model.ScreenRequest
 import com.lingxi.app.data.model.ScreenResult
 import com.lingxi.app.data.model.SectorDetail
 import com.lingxi.app.data.model.SectorMovers
+import com.lingxi.app.data.model.SentimentAi
 import com.lingxi.app.data.model.StockAnalyze
 import com.lingxi.app.data.model.StockAnalyzeAi
 import com.lingxi.app.data.model.StockAnalyzeTicks
@@ -45,6 +46,12 @@ interface LingxiApi {
     suspend fun sentiment(
         @Query("days") days: Int = 5,
     ): MsiResult
+
+    @GET("api/market/sentiment/ai")
+    suspend fun sentimentAi(
+        @Query("days") days: Int = 5,
+        @Query("force") force: Boolean = false,
+    ): SentimentAi
 
     @GET("api/market/mid-term-trend")
     suspend fun midTermTrend(): MttResult

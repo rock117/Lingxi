@@ -337,6 +337,20 @@ GET /api/market/sentiment?days=5
 数据源：`sc_stock` + `sc_stock_kline_d1_bfq`；开市日来自 `sc_trade_calendar`（`is_open` / `pre_trade_date`，与 Tushare `trade_cal` 一致）。  
 交易日连续竞价当日：Miana `/api/stock/v3/realtime`（MSI / 日内推送；非企业版不用 `/realtimemarket`）；拉取截面写入 `market_realtime_snapshot`（`(symbol, quote_ts)`）；结果缓存见 §6.3。  
 
+### 8.0 AI 解读
+
+```
+GET /api/market/sentiment/ai?days=5&force=0
+```
+
+汇总**当日 MSI**、**近 N 日序列**与 **MTT**，调用大模型生成简体中文解读（`DimAi` 形状）。提示词见 `backend/config/ai_prompts.toml` 的 `[market_sentiment]`；进程内按 `trade_date|days` 缓存约 30 分钟，`force=1` 跳过缓存。详情见 `docs/ai.md` §4.4。
+
+| 字段 | 含义 |
+|---|---|
+| `trade_date` / `days` | 截面交易日与近 N 日窗口 |
+| `ai` | `status` / `text` / `bias` / `confidence` / `flags` |
+| `ai_enabled` / `ai_model` / `cached` | 是否启用、模型名、是否命中缓存 |
+
 ### 8.1 响应
 
 | 字段 | 含义 |

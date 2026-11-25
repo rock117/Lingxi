@@ -18,6 +18,7 @@ pub mod etf_share_groups;
 pub mod fund_stats;
 pub mod fundamentals;
 pub mod stock_analyze;
+pub mod sentiment_ai;
 pub mod intraday_alert;
 pub mod intraday_push;
 pub mod mid_term;

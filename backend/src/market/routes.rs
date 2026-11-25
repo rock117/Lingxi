@@ -31,6 +31,7 @@ use super::sector::{self as sector_svc, SectorDetailOut, SectorMoversOut};
 use super::fundamentals;
 use super::screen::{self, ScreenExpression, ScreenResult, StrategyDef};
 use super::session;
+use super::sentiment_ai::{self as sentiment_ai_svc, SentimentAiOut};
 use super::stock_analyze::{
     self as stock_analyze_svc, StockAnalyzeAiOut, StockAnalyzeOut, StockAnalyzeTicksOut,
 };
@@ -146,6 +147,26 @@ pub async fn mid_term_trend(
     );
 
     Ok(Json(result))
+}
+
+/// `GET /api/market/sentiment/ai?days=5&force=0` — 汇总当日 MSI + 近 N 日 + MTT 的 AI 解读。
+#[get("/api/market/sentiment/ai?<days>&<force>")]
+pub async fn sentiment_ai(
+    db: &rocket::State<DatabaseConnection>,
+    miana: &rocket::State<MianaClient>,
+    cache: &rocket::State<RealtimeDayCache>,
+    ai: &rocket::State<AiClient>,
+    days: Option<usize>,
+    force: Option<bool>,
+) -> AppResult<Json<SentimentAiOut>> {
+    let days = days.unwrap_or(5).clamp(3, 30);
+    let msi_input = load_msi_input(db.inner(), days, miana.inner(), cache.inner()).await?;
+    let msi = calculator::calculate_msi(&msi_input);
+    let mtt_input = load_mtt_input(db.inner(), MTT_LOOKBACK_DAYS).await?;
+    let mtt = mid_term::calculate_mtt(&mtt_input);
+
+    let out = sentiment_ai_svc::analyze(ai.inner(), &msi, &mtt, force.unwrap_or(false)).await;
+    Ok(Json(out))
 }
 
 /// `GET /api/market/intraday-alerts` — 立即计算趋势/超跌两类（不落库、不推送）。

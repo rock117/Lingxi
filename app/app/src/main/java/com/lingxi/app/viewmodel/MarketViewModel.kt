@@ -7,6 +7,7 @@ import com.lingxi.app.data.api.ApiClient
 import com.lingxi.app.data.model.EtfShareGroupsResult
 import com.lingxi.app.data.model.FundStatsMeta
 import com.lingxi.app.data.model.FundStatsResult
+import com.lingxi.app.data.model.DimAi
 import com.lingxi.app.data.model.MsiResult
 import com.lingxi.app.data.model.MttResult
 import com.lingxi.app.data.model.PeriodOption
@@ -40,6 +41,11 @@ data class MarketUiState(
     /** 最近一次 MSI/MTT 均成功拉取的上海时间文案；从未成功则为 null。 */
     val lastSuccessAt: String? = null,
     val refreshIntervalMinutes: Int = 5,
+    val ai: DimAi = DimAi(),
+    val aiEnabled: Boolean = false,
+    val aiModel: String? = null,
+    val aiLoading: Boolean = false,
+    val aiError: String? = null,
 )
 
 data class FundStatsUiState(
@@ -250,7 +256,8 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
     fun refresh(days: Int = 5) {
         viewModelScope.launch {
             val cfg = prefs.configFlow.first()
-            _ui.value = _ui.value.copy(
+            val prev = _ui.value
+            _ui.value = prev.copy(
                 loading = true,
                 error = null,
                 serverHint = cfg.httpBaseUrl(),
@@ -283,7 +290,7 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
                     _ui.value.lastSuccessAt
                 }
 
-                _ui.value = MarketUiState(
+                _ui.value = _ui.value.copy(
                     loading = false,
                     result = msiResult.getOrElse { _ui.value.result },
                     mtt = mttResult.getOrElse { _ui.value.mtt },
@@ -292,15 +299,41 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
                     lastSuccessAt = successAt,
                     refreshIntervalMinutes = cfg.refreshIntervalMinutes.coerceIn(1, 60),
                 )
+                if (bothOk) {
+                    loadSentimentAi(days = days, force = false)
+                }
             } catch (e: Exception) {
-                _ui.value = MarketUiState(
+                _ui.value = _ui.value.copy(
                     loading = false,
-                    result = _ui.value.result,
-                    mtt = _ui.value.mtt,
                     error = e.message ?: e.javaClass.simpleName,
                     serverHint = cfg.httpBaseUrl(),
-                    lastSuccessAt = _ui.value.lastSuccessAt,
-                    refreshIntervalMinutes = cfg.refreshIntervalMinutes.coerceIn(1, 60),
+                )
+            }
+        }
+    }
+
+    fun loadSentimentAi(days: Int = 5, force: Boolean = false) {
+        viewModelScope.launch {
+            val cfg = prefs.configFlow.first()
+            _ui.value = _ui.value.copy(aiLoading = true, aiError = null)
+            try {
+                val api = ApiClient.create(cfg)
+                val out = api.sentimentAi(days = days, force = force)
+                _ui.value = _ui.value.copy(
+                    aiLoading = false,
+                    ai = out.ai,
+                    aiEnabled = out.aiEnabled,
+                    aiModel = out.aiModel,
+                    aiError = null,
+                )
+            } catch (e: Exception) {
+                _ui.value = _ui.value.copy(
+                    aiLoading = false,
+                    ai = DimAi(
+                        status = "error",
+                        text = e.message ?: e.javaClass.simpleName,
+                    ),
+                    aiError = e.message ?: e.javaClass.simpleName,
                 )
             }
         }

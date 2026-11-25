@@ -122,6 +122,16 @@ backend/src/market/
 - UI：偏多/偏空色标、置信度、flags 芯片；完整报价随列表滚动。  
 - 搜索：`GET /api/market/stocks/search`。
 
+### 4.4 市场情绪 AI
+
+```
+GET /api/market/sentiment/ai?days=5&force=0
+```
+
+- 服务端现算 MSI（同 `GET /sentiment`）与 MTT，打包 `today` / `recent` / `mtt` 事实给模型。  
+- 模型输出**一篇**综合结论（现状、是否可持续、短线可能怎么走及依据；当日与近 N 日揉在一起）；形状同个股 `DimAi`；缓存键 `trade_date|days`，TTL 约 30 分钟。  
+- App **情绪**页分数区只展示数字，其下「综合解读」卡为唯一叙事；刷新事实后懒加载，可「重新生成」。
+
 ---
 
 ## 5. 其它能力

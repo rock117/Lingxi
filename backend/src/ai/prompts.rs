@@ -141,6 +141,60 @@ pub fn stock_analyze_statements_system() -> String {
     stock_analyze_prompts().statements.clone()
 }
 
+#[derive(Debug, Deserialize)]
+struct MarketSentimentPromptsFile {
+    market_sentiment: MarketSentimentSection,
+}
+
+#[derive(Debug, Deserialize)]
+struct MarketSentimentSection {
+    system: String,
+}
+
+fn builtin_market_sentiment() -> String {
+    r#"你是 A 股市场情绪解读助手。只根据用户 JSON 的 today / recent / mtt，写一篇综合结论（现状、是否可持续、短线可能怎么走及原因）；不要拆成两段；禁止编造数字。
+只输出一个 JSON：{"text":"5～8句简体中文","bias":"bullish|neutral|bearish","confidence":"high|medium|low","flags":["短标签"]}。
+用「可能」表述；禁止买卖指令；结尾可含「仅供参考，非投资建议」。"#
+        .to_string()
+}
+
+fn market_sentiment_prompt() -> &'static String {
+    static P: OnceLock<String> = OnceLock::new();
+    P.get_or_init(|| {
+        for path in candidate_prompt_paths() {
+            if !path.is_file() {
+                continue;
+            }
+            match std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|raw| toml::from_str::<MarketSentimentPromptsFile>(&raw).ok())
+            {
+                Some(f) => {
+                    let s = f.market_sentiment.system.trim().to_string();
+                    if !s.is_empty() {
+                        info!(path = %path.display(), "已加载市场情绪 AI 提示词");
+                        return s;
+                    }
+                }
+                None => {}
+            }
+        }
+        // 内嵌 toml 含 [market_sentiment] 时优先用内嵌
+        if let Ok(f) = toml::from_str::<MarketSentimentPromptsFile>(EMBEDDED_AI_PROMPTS) {
+            let s = f.market_sentiment.system.trim().to_string();
+            if !s.is_empty() {
+                return s;
+            }
+        }
+        warn!("未找到 market_sentiment 提示词，使用内置回退");
+        builtin_market_sentiment()
+    })
+}
+
+pub fn market_sentiment_system() -> String {
+    market_sentiment_prompt().clone()
+}
+
 pub fn draft_screen_system(catalog_json: &str) -> String {
     format!(
         r#"你是 Lingxi 条件选股助手。根据用户自然语言，生成可执行的选股 expression JSON。

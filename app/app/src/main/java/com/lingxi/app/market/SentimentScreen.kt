@@ -2,6 +2,7 @@ package com.lingxi.app.market
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -19,10 +21,12 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -40,15 +44,16 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.lingxi.app.data.model.DimAi
 import com.lingxi.app.data.model.MsiComponents
 import com.lingxi.app.data.model.MsiDiagnostics
 import com.lingxi.app.data.model.MsiResult
 import com.lingxi.app.data.model.MttResult
-import com.lingxi.app.data.model.comboOutlook
 import com.lingxi.app.data.model.mttStatusLabel
 import com.lingxi.app.data.model.scoreBandLabel
 import com.lingxi.app.data.model.scoreDegreeLabel
 import com.lingxi.app.ui.PercentProgress
+import com.lingxi.app.ui.QuoteColors
 import com.lingxi.app.viewmodel.MarketViewModel
 import kotlin.math.roundToInt
 
@@ -138,13 +143,29 @@ fun SentimentScreen(viewModel: MarketViewModel) {
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
             }
-            SentimentContent(msi = ui.result, mtt = ui.mtt)
+            SentimentContent(
+                msi = ui.result,
+                mtt = ui.mtt,
+                ai = ui.ai,
+                aiEnabled = ui.aiEnabled,
+                aiModel = ui.aiModel,
+                aiLoading = ui.aiLoading,
+                onRetryAi = { viewModel.loadSentimentAi(force = true) },
+            )
         }
     }
 }
 
 @Composable
-private fun SentimentContent(msi: MsiResult?, mtt: MttResult?) {
+private fun SentimentContent(
+    msi: MsiResult?,
+    mtt: MttResult?,
+    ai: DimAi,
+    aiEnabled: Boolean,
+    aiModel: String?,
+    aiLoading: Boolean,
+    onRetryAi: () -> Unit,
+) {
     var expanded by remember { mutableStateOf<MsiLayerKind?>(null) }
     val today = msi?.today
 
@@ -156,6 +177,14 @@ private fun SentimentContent(msi: MsiResult?, mtt: MttResult?) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         DualScoreHeader(msi = msi, mtt = mtt)
+
+        SentimentAiPanel(
+            ai = ai,
+            aiEnabled = aiEnabled,
+            aiModel = aiModel,
+            loading = aiLoading,
+            onRetry = onRetryAi,
+        )
 
         if (mtt != null) {
             SectionTitle("中期 MTT")
@@ -499,15 +528,7 @@ private fun DualScoreHeader(msi: MsiResult?, mtt: MttResult?) {
                 subtitle = mtt?.let { mttStatusLabel(it.status) } ?: "—",
             )
         }
-        Spacer(modifier = Modifier.height(12.dp))
-        Text(
-            comboOutlook(msi?.today?.value, msi?.recent?.value, mtt?.value),
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Medium,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 8.dp),
-        )
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         val meta = buildList {
             msi?.today?.date?.let { add(it) }
             msi?.let { add("近 ${it.recent.days} 日") }
@@ -573,4 +594,126 @@ private fun msiTone(value: Double): Color = when {
     value < 35 -> Color(0xFF2E7D32)
     value >= 60 || value <= 40 -> Color(0xFFF9A825)
     else -> Color(0xFF546E7A)
+}
+
+@Composable
+private fun SentimentAiPanel(
+    ai: DimAi,
+    aiEnabled: Boolean,
+    aiModel: String?,
+    loading: Boolean,
+    onRetry: () -> Unit,
+) {
+    val biasLabel = when (ai.bias) {
+        "bullish" -> "偏多"
+        "bearish" -> "偏空"
+        "neutral" -> "中性"
+        else -> null
+    }
+    val confLabel = when (ai.confidence) {
+        "high" -> "高置信"
+        "medium" -> "中置信"
+        "low" -> "低置信"
+        else -> null
+    }
+    val body = when {
+        loading && ai.text.isBlank() -> "正在综合当日与近5日数据…"
+        ai.status == "pending" && aiEnabled -> "准备生成综合解读…"
+        ai.status == "disabled" -> ai.text.ifBlank { "AI 未启用" }
+        ai.status == "error" -> ai.text.ifBlank { "AI 失败" }
+        else -> ai.text.ifBlank { "暂无分析内容" }
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "综合解读",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                if (loading) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                } else if (!aiEnabled) {
+                    Text(
+                        "未启用",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                } else if (!aiModel.isNullOrBlank()) {
+                    Text(
+                        aiModel,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (biasLabel != null || confLabel != null || ai.flags.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    biasLabel?.let {
+                        val c = when (ai.bias) {
+                            "bullish" -> QuoteColors.Up
+                            "bearish" -> QuoteColors.Down
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = c,
+                        )
+                    }
+                    confLabel?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    ai.flags.take(4).forEach { flag ->
+                        Text(
+                            flag,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                                )
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                        )
+                    }
+                }
+            }
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+            )
+            Text(
+                body,
+                style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
+            )
+            if (ai.status == "error" || (ai.status == "ready" && aiEnabled)) {
+                Text(
+                    if (ai.status == "error") "重试" else "重新生成",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable(enabled = !loading, onClick = onRetry),
+                )
+            }
+        }
+    }
 }
